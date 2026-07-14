@@ -57,6 +57,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('install-progress', wrapped);
     return () => ipcRenderer.removeListener('install-progress', wrapped);
   },
+
+  // Local model engine (PROV-05) — mirrors the whisper download-progress
+  // bridges above, but pull progress arrives as structured { status, percent }.
+  pullModel: (modelTag) => ipcRenderer.invoke('download-model', modelTag),
+  getModelStatus: () => ipcRenderer.invoke('get-model-status'),
+  listInstalledModels: () => ipcRenderer.invoke('list-installed-models'),
+  modelPreflight: () => ipcRenderer.invoke('model-preflight'),
+  recoverModel: (action) => ipcRenderer.invoke('recover-model', action),
+  testProviderConnection: () => ipcRenderer.invoke('test-provider-connection'),
+  onModelPullProgress: (callback) => {
+    const wrapped = (_event, p) => {
+      try { callback(p); } catch (err) { console.error('onModelPullProgress error:', err); }
+    };
+    ipcRenderer.on('model-pull-progress', wrapped);
+    return () => ipcRenderer.removeListener('model-pull-progress', wrapped);
+  },
   updateAppIcon: (iconKey) => ipcRenderer.invoke('update-app-icon', iconKey),
   updateActiveSkill: (skill) => ipcRenderer.invoke('update-active-skill', skill),
   restartAppForStealth: () => ipcRenderer.invoke('restart-app-for-stealth'),

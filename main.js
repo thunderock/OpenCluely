@@ -122,6 +122,9 @@ class ApplicationController {
     // Lazily-initialised in getWhisperInstaller() so tests can mock
     // the constructor without polluting main-process startup.
     this._whisperInstaller = null;
+    // Local engine lifecycle (PROV-05) — lazily-initialised in
+    // getLocalModelManager() so it never runs during import/tests.
+    this._localModelManager = null;
     this.isFirstRun = false;
 
     // Window configurations for reference
@@ -277,6 +280,20 @@ class ApplicationController {
       });
 
       sessionManager.addEvent("Application started");
+
+      // Local engine (PROV-05): adopt a running Ollama or start one so the app
+      // is answer-ready. NEVER blocks startup — start() degrades gracefully and
+      // any failure here is logged so the app continues (the Local-down UX
+      // surfaces recovery). On first run we only start/adopt the daemon; the
+      // onboarding flow (03-06) drives the visible model pull, not this path.
+      try {
+        const modelStatus = await this.getLocalModelManager().start();
+        logger.info("Local model manager started", modelStatus);
+      } catch (e) {
+        logger.warn("Local model manager start failed (continuing)", {
+          error: e.message,
+        });
+      }
     } catch (error) {
       this.starting = false;
       logger.error("Application initialization failed", {
@@ -765,6 +782,87 @@ class ApplicationController {
       } catch (e) {
         logger.error("Whisper model download failed", { error: e.message });
         return { ok: false, message: e.message, path: null };
+      }
+    });
+
+    // ── Local model engine (PROV-05) ──
+    // Provider-neutral / local-named handlers so they survive PROV-07 (the
+    // gemini-named handlers are deleted then). Mirrors the whisper
+    // download-progress pattern but emits STRUCTURED { status, percent } events.
+    ipcMain.handle("download-model", async (event, modelTag) => {
+      try {
+        const sender = event.sender;
+        return await this.getLocalModelManager().pullModel(
+          modelTag || config.get("llm.local.model"),
+          {
+            onProgress: (p) => {
+              try { sender.send("model-pull-progress", p); } catch (_) { /* ignore */ }
+            },
+          },
+        );
+      } catch (e) {
+        logger.error("Model pull failed", { error: e.message });
+        return { ok: false, message: e.message };
+      }
+    });
+
+    ipcMain.handle("get-model-status", async () => {
+      try {
+        return await this.getLocalModelManager().getStatus();
+      } catch (e) {
+        return { serverUp: false, error: e.message };
+      }
+    });
+
+    ipcMain.handle("list-installed-models", async () => {
+      try {
+        return await this.getLocalModelManager().listInstalledModels();
+      } catch (_) {
+        return [];
+      }
+    });
+
+    ipcMain.handle("model-preflight", async () => {
+      try {
+        return await this.getLocalModelManager().preflight();
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    });
+
+    // Local-down recovery (03-06 UX). action: 'restart' → start() only when WE
+    // own the daemon (an adopted daemon isn't ours to restart — surface status
+    // so the UI guides the user); 'repull' → re-pull the model with progress;
+    // anything else → just report status.
+    ipcMain.handle("recover-model", async (event, action) => {
+      try {
+        const manager = this.getLocalModelManager();
+        if (action === "restart") {
+          const status = await manager.getStatus();
+          return status.owned ? await manager.start() : status;
+        }
+        if (action === "repull") {
+          const sender = event.sender;
+          return await manager.pullModel(config.get("llm.local.model"), {
+            onProgress: (p) => {
+              try { sender.send("model-pull-progress", p); } catch (_) { /* ignore */ }
+            },
+          });
+        }
+        return await manager.getStatus();
+      } catch (e) {
+        logger.error("Model recovery failed", { action, error: e.message });
+        return { ok: false, error: e.message };
+      }
+    });
+
+    // Provider-neutral connection test (survives PROV-07; llmService is the
+    // registry-selected provider — Gemini today, Local after removal).
+    ipcMain.handle("test-provider-connection", async () => {
+      try {
+        return await llmService.testConnection();
+      } catch (e) {
+        return { success: false, error: e.message };
       }
     });
 
@@ -1446,6 +1544,14 @@ class ApplicationController {
     globalShortcut.unregisterAll();
     windowManager.destroyAllWindows();
 
+    // Stop the local engine only if WE own it — supervisor.stop() no-ops for an
+    // adopted daemon (we never kill an Ollama we didn't start). Fire-and-forget:
+    // quit must not wait on a graceful SIGTERM race.
+    try {
+      const stopping = this.getLocalModelManager().stop();
+      if (stopping && typeof stopping.catch === "function") stopping.catch(() => {});
+    } catch (_) { /* best effort */ }
+
     const sessionStats = sessionManager.getMemoryUsage();
     logger.info("Application shutting down", {
       sessionEvents: sessionStats.eventCount,
@@ -1464,6 +1570,17 @@ class ApplicationController {
       });
     }
     return this._whisperInstaller;
+  }
+
+  // Local engine (PROV-05): adopts/owns the Ollama daemon, ensures the
+  // configured model, keeps it resident, and reports owned/adopted + health.
+  // Lazily constructed so import-time and tests never touch Ollama.
+  getLocalModelManager() {
+    if (!this._localModelManager) {
+      const LocalModelManager = require("./src/core/local-model.manager");
+      this._localModelManager = new LocalModelManager();
+    }
+    return this._localModelManager;
   }
 
   getSettings() {
