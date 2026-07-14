@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 1 of 8 (Foundation — Supervisor, Tests, Lint, Makefile)
-Plan: 0 of 5 complete (all 5 planned, 3 waves)
-Status: Planned — ready to execute (paused before execution)
-Last activity: 2026-07-13 — Phase 1 planned (5 plans, 3 waves; research HIGH, plan-check 0 blockers); paused before execution
+Plan: 1 of 5 complete (wave 1 executing; 3 waves)
+Status: Executing — Phase 1 wave 1 (plans 01-01, 01-02, 01-03 in parallel)
+Last activity: 2026-07-14 — 01-02 complete (pure VadSegmenter extracted from SpeechService + deterministic node:test suite)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
@@ -47,6 +47,8 @@ Load-bearing sequencing decisions driving this roadmap:
 - Phase 5: DOMPurify (SEC-01) + macOS TCC recovery (SEC-02) ship in the SAME phase as continuous capture (CONT-04) / md-context (CONT-05) — the features that create the threat surface.
 - Local runtime = Ollama ≥ 0.19 (`qwen3-vl:8b`), adopt-if-present / own-if-started; cache at `~/.ollama/models` (not `~/.cache`).
 
+- Phase 1: VAD decision logic extracted to a pure `src/core/vad-segmenter.js` (action-return delegation: accumulate|flush|discard|noop); `SpeechService` keeps buffer storage/Whisper flush and delegates the VAD-enabled path — established the pure-logic extraction + node:test pattern (FND-01, plan 01-02).
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -63,6 +65,6 @@ Research flags to resolve during planning (not blockers to starting):
 
 ## Session Continuity
 
-Last session: 2026-07-13
-Stopped at: Phase 1 planned; paused before execution (user chose to run execute-phase later)
+Last session: 2026-07-14
+Stopped at: Phase 1 wave 1 in progress — 01-02 (VAD segmenter) complete
 Resume file: .planning/phases/01-foundation-supervisor-tests-lint-makefile/ (run /gsd:execute-phase 1)
