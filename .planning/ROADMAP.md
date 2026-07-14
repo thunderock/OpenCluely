@@ -13,7 +13,7 @@ This milestone turns OpenCluely from a cloud-Gemini, on-demand overlay into a lo
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation — Supervisor, Tests, Lint, Makefile** - Generic service supervisor + a test/lint/Makefile safety net for safe refactoring
-- [ ] **Phase 2: Provider Seam — Wrap Gemini Verbatim** - `LLMProvider` abstraction + `RequestBuilder`; app still works on Gemini, call-sites unchanged
+- [x] **Phase 2: Provider Seam — Wrap Gemini Verbatim** - `LLMProvider` abstraction + `RequestBuilder`; app still works on Gemini, call-sites unchanged
 - [ ] **Phase 3: Local Engine + Cloud Removal** - Local multimodal model as the primary/default path; Gemini + Azure removed last, after Local is proven
 - [ ] **Phase 4: Continuous Hearing — Resident STT + Ambient Listening** - Resident whisper.cpp continuously transcribes mic + macOS system audio from launch to quit
 - [ ] **Phase 5: Continuous Capture, Notes & Hardening** - Throttled/deduped screen capture + bounded `.md` context, shipped with output sanitization, TCC recovery, and IPC scoping
@@ -49,9 +49,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. The Gemini-specific cert-verify bypass and User-Agent override now live inside the Gemini provider (active only when Gemini is selected), not as unconditional global startup code — so they disappear cleanly at removal.
   4. A `RequestBuilder` produces one neutral request shape from (skill, text/image, history, md-context), with no prompt logic living inside any provider.
 **Plans**: 3 plans (3 waves)
-- [ ] 02-01-PLAN.md — `LLMProvider` interface + pure DI `RequestBuilder` (neutral struct) + node:test (Wave 1)
-- [ ] 02-02-PLAN.md — Gemini provider (verbatim relocation) + `serialize()` + registry + byte-identical golden parity (Wave 2)
-- [ ] 02-03-PLAN.md — Thin `llm.service` facade flip + cert/UA relocation into provider (gated) + 3-entry-point smoke (Wave 3)
+- [x] 02-01-PLAN.md — `LLMProvider` interface + pure DI `RequestBuilder` (neutral struct) + node:test (Wave 1)
+- [x] 02-02-PLAN.md — Gemini provider (verbatim relocation) + `serialize()` + registry + byte-identical golden parity (Wave 2)
+- [x] 02-03-PLAN.md — Thin `llm.service` facade flip + cert/UA relocation into provider (gated) + 3-entry-point smoke [live smoke waived — no key] (Wave 3)
 
 ### Phase 3: Local Engine + Cloud Removal
 **Goal**: A local multimodal model is the primary, default answer path over an OpenAI-compatible localhost endpoint — the "if all else fails, this works" core value engine — and only after it is proven are Gemini + Azure deleted entirely.
@@ -131,7 +131,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation — Supervisor, Tests, Lint, Makefile | 5/5 | Complete | 2026-07-14 |
-| 2. Provider Seam — Wrap Gemini Verbatim | 0/3 | Planned | - |
+| 2. Provider Seam — Wrap Gemini Verbatim | 3/3 | Complete | 2026-07-14 |
 | 3. Local Engine + Cloud Removal | 0/TBD | Not started | - |
 | 4. Continuous Hearing — Resident STT + Ambient Listening | 0/TBD | Not started | - |
 | 5. Continuous Capture, Notes & Hardening | 0/TBD | Not started | - |
