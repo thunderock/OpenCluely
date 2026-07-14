@@ -64,7 +64,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. On first run with the model missing, the app pulls `qwen3-vl:8b` with visible, resumable progress, caches it at Ollama's default location, adopts a running Ollama if present (starts one only if absent, never killing a daemon it didn't start), and keeps it resident (`keep_alive:-1`).
   4. The user can choose provider and model in settings with Local as the default, and a non-coding question (e.g., summarizing an on-screen contract clause) gets a relevant general-purpose answer, with DSA/coding available as an optional skill overlay.
   5. Gemini and Azure are fully removed (SDKs, hardcoded hosts, cert-verify bypass, Azure browser-DOM polyfill) — done last; and measured TTFT at session end with full md-notes loaded stays within budget while total memory (VLM + KV + resident Whisper + Electron) stays under the macOS GPU-wired ceiling with no swap.
-**Plans**: TBD (derived in /gsd:plan-phase) — RESEARCH FLAG: TTFT/memory validation on 32 GB, multimodal request shape, Ollama adopt/own lifecycle
+**Plans**: 8 plans (5 waves)
+- [ ] 03-01-PLAN.md — Foundation: install openai+ollama, restructure config into per-provider blocks (Local default) (Wave 1)
+- [ ] 03-02-PLAN.md — GEN-01: general reply-suggester default + Coding skill; neutralize both interview prompt sources (Wave 1)
+- [ ] 03-03-PLAN.md — LocalProvider (PROV-03/04): text stream + screenshot over /v1; mirror the full seam; register Local (Wave 2)
+- [ ] 03-04-PLAN.md — LocalModelManager (PROV-05): adopt/own Ollama + resumable pull + resident; model IPC + lifecycle (Wave 2)
+- [ ] 03-05-PLAN.md — Settings UI (PROV-06): provider + model pickers (curated + advanced), Local default, status/repair (Wave 3)
+- [ ] 03-06-PLAN.md — First-run onboarding (Ollama guide + auto-pull) + in-overlay Local-down recovery UX (Wave 3)
+- [ ] 03-07-PLAN.md — Validation gate: prove Local (3 entry points + rough TTFT/memory smoke) — manual sign-off (Wave 4)
+- [ ] 03-08-PLAN.md — Cloud removal (PROV-07): delete Gemini behind a hard manual approval; keep Azure STT (Wave 5)
 
 ### Phase 4: Continuous Hearing — Resident STT + Ambient Listening
 **Goal**: The app continuously hears both sides of a conversation through a resident transcriber, with no per-utterance process spawn — the prerequisite for continuous mode.
@@ -144,7 +152,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 |-------|----------------|--------|-----------|
 | 1. Foundation — Supervisor, Tests, Lint, Makefile | 5/5 | Complete | 2026-07-14 |
 | 2. Provider Seam — Wrap Gemini Verbatim | 3/3 | Complete | 2026-07-14 |
-| 3. Local Engine + Cloud Removal | 0/TBD | Not started | - |
+| 3. Local Engine + Cloud Removal | 0/8 | Not started | - |
 | 4. Continuous Hearing — Resident STT + Ambient Listening | 0/TBD | Not started | - |
 | 5. Continuous Capture, Notes & Hardening | 0/TBD | Not started | - |
 | 6. Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI | 0/TBD | Not started | - |
