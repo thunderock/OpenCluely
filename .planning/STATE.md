@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 1 of 8 (Foundation — Supervisor, Tests, Lint, Makefile)
-Plan: 3 of 5 complete (wave 1 done; 3 waves)
-Status: Executing — Phase 1 wave 1 complete (plans 01-01, 01-02, 01-03)
-Last activity: 2026-07-14 — 01-01 complete (.env + skill/prompt normalization); 01-02 complete (VadSegmenter); 01-03 complete (generic ServiceSupervisor FND-04 + real-spawn node:test suite proving SC3/SC4)
+Plan: 4 of 5 complete (wave 1 done; 01-04 lint gate done; 01-05 remains)
+Status: Executing — Phase 1: plans 01-01..01-04 complete; next 01-05 (Makefile + CI lint/test gates)
+Last activity: 2026-07-14 — 01-04 complete (ESLint 9 flat config, lean error-only gate; `npx eslint .` green across the whole repo; eslint+globals committed devDeps with a synced lockfile)
 
-Progress: [██████░░░░] 60%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
@@ -53,6 +53,8 @@ Load-bearing sequencing decisions driving this roadmap:
 
 - Phase 1: Generic `ServiceSupervisor` (`src/core/service-supervisor.js`, FND-04) built once with a DI spawn seam (`options.spawn || spawn`), port/HTTP health probes, capped exponential backoff → give-up 'failed', SIGTERM→SIGKILL (awaits reaping), and adopt-if-present/own-if-started (stop() never kills a foreign process). Hardened startup uses a one-shot `_startupSettled` guard to prevent double-restart/hang; stop() settles immediately if the owned child already exited. Fits both future consumers unchanged (Ollama HTTP+adopt P3, whisper-server TCP+own+pidFile P4). Proven by a real-spawn node:test suite (SC3/SC4), plan 01-03.
 
+- Phase 1: ESLint 9 flat config (`eslint.config.js`, FND-02 lint half) is the whole-repo gate — lean error-only ruleset (`no-undef` + lenient `no-unused-vars` with `caughtErrors:'none'`), per-env files blocks (Node/CommonJS vs renderer `script` with browser + app-injected globals incl. `require` for chat-window dual-load), vendored/standalone dirs ignored but hand-written `lib/mathrender.js` linted. `eslint@^9` + `globals` are committed devDeps with a synced lockfile (npm-ci parity). `npx eslint .` is the exact gate 01-05's Makefile/CI will invoke; repo made green surgically (dead-code removal + `_`-prefixed unused args + removed stale disable directives), no mass reformat (plan 01-04).
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -70,5 +72,5 @@ Research flags to resolve during planning (not blockers to starting):
 ## Session Continuity
 
 Last session: 2026-07-14
-Stopped at: Phase 1 wave 1 complete — 01-01 (.env + skill-normalizer), 01-02 (VAD segmenter), 01-03 (ServiceSupervisor) done; next: wave 2 (01-04 ESLint, 01-05 Makefile/CI)
+Stopped at: Completed 01-04-PLAN.md — ESLint 9 lint gate (`npx eslint .`) green across the repo; next: 01-05 (Makefile + CI lint/test gates). NOTE for 01-05: run the node:test suite via `node --test test/*.test.js` (node v26 errors on `node --test test/`, treating the dir as a module).
 Resume file: .planning/phases/01-foundation-supervisor-tests-lint-makefile/ (run /gsd:execute-phase 1)
