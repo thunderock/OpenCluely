@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 1 of 8 (Foundation — Supervisor, Tests, Lint, Makefile)
-Plan: 2 of 5 complete (wave 1 executing; 3 waves)
-Status: Executing — Phase 1 wave 1 (plans 01-01, 01-02, 01-03 in parallel)
-Last activity: 2026-07-14 — 01-01 complete (pure .env parse/format/upsert + skill/prompt normalization extracted, 25 node:test cases); 01-02 complete (VadSegmenter)
+Plan: 3 of 5 complete (wave 1 done; 3 waves)
+Status: Executing — Phase 1 wave 1 complete (plans 01-01, 01-02, 01-03)
+Last activity: 2026-07-14 — 01-01 complete (.env + skill/prompt normalization); 01-02 complete (VadSegmenter); 01-03 complete (generic ServiceSupervisor FND-04 + real-spawn node:test suite proving SC3/SC4)
 
-Progress: [████░░░░░░] 40%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
@@ -51,6 +51,8 @@ Load-bearing sequencing decisions driving this roadmap:
 
 - Phase 1: `.env` string round-trip (`src/core/env-file.js`: parseEnv/formatEnvValue/upsertEnvContent) and skill/prompt normalization (`src/core/skill-normalizer.js`) extracted as pure fs-free modules; `main.js`/`first-run.js`/`prompt-loader.js` delegate with zero behavior change. Tests require only the extracted modules (quality gate); delegating files import only the symbols they use to stay lint-clean for 01-04 (FND-01, plan 01-01).
 
+- Phase 1: Generic `ServiceSupervisor` (`src/core/service-supervisor.js`, FND-04) built once with a DI spawn seam (`options.spawn || spawn`), port/HTTP health probes, capped exponential backoff → give-up 'failed', SIGTERM→SIGKILL (awaits reaping), and adopt-if-present/own-if-started (stop() never kills a foreign process). Hardened startup uses a one-shot `_startupSettled` guard to prevent double-restart/hang; stop() settles immediately if the owned child already exited. Fits both future consumers unchanged (Ollama HTTP+adopt P3, whisper-server TCP+own+pidFile P4). Proven by a real-spawn node:test suite (SC3/SC4), plan 01-03.
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -68,5 +70,5 @@ Research flags to resolve during planning (not blockers to starting):
 ## Session Continuity
 
 Last session: 2026-07-14
-Stopped at: Phase 1 wave 1 in progress — 01-01 (.env + skill-normalizer) and 01-02 (VAD segmenter) complete
+Stopped at: Phase 1 wave 1 complete — 01-01 (.env + skill-normalizer), 01-02 (VAD segmenter), 01-03 (ServiceSupervisor) done; next: wave 2 (01-04 ESLint, 01-05 Makefile/CI)
 Resume file: .planning/phases/01-foundation-supervisor-tests-lint-makefile/ (run /gsd:execute-phase 1)
