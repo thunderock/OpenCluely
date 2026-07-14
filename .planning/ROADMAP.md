@@ -20,6 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 6: Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI** - After each pause, a relevant streamed answer appears; relevance gate + listening indicator + kill switch
 - [ ] **Phase 7: CLI Backup Providers — Claude / Codex** - On-demand escalation + auto-fallback to Claude/Codex CLI, reusing terminal auth, never on the per-pause path
 - [ ] **Phase 8: Packaging & Release — macOS DMG CI + Cleanup** - Unsigned universal macOS DMG in CI, `asarUnpack` for helpers, `xattr` docs, dead-code + license cleanup
+- [ ] **Phase 9: Website — Refresh & Publish** - Update the existing `webapp/` static site to the local-first product + a GitHub Pages deploy workflow
 
 ## Phase Details
 
@@ -123,10 +124,21 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Dead code is removed (`chat-window.js`, the 0-byte `fallback-capture.service.js`, the orphaned Gemini modal, dead IPC handlers) and the license is reconciled to one (currently ISC / Apache-2.0 / MIT stated in three places).
 **Plans**: TBD (derived in /gsd:plan-phase)
 
+### Phase 9: Website — Refresh & Publish
+**Goal**: The existing `webapp/` static landing site tells the *local-first* story — private, on-device, always-on continuous copilot — instead of the old cloud-Gemini interview-copilot framing, and it ships to GitHub Pages via CI so the public site reflects the shipped product. Last phase: it documents finished v1.
+**Depends on**: All feature + release phases (2–8) — the site describes the final product and its downloads, so it lands last.
+**Requirements**: WEB-01, WEB-02
+**Success Criteria** (what must be TRUE):
+  1. `webapp/index.html` + copy reflect the local-first product (on-device model, continuous hearing/watching, private/offline, no API key) — no stale "cloud Gemini" / "API key" / interview-only positioning; features, screenshots/OG image, and download/install match the final README.
+  2. The site still works as a dependency-free static bundle (opens locally; all internal links + assets resolve; no build step introduced).
+  3. A CI workflow publishes `webapp/` to GitHub Pages on push to `main` (static deploy; repo owner enables Pages in settings) — separate from `ci.yml` and `release.yml`.
+  4. `README.md`'s Website link points at the published site, and the site links back to the latest release/downloads.
+**Plans**: TBD (derived in /gsd:plan-phase)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -138,7 +150,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 6. Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI | 0/TBD | Not started | - |
 | 7. CLI Backup Providers — Claude / Codex | 0/TBD | Not started | - |
 | 8. Packaging & Release — macOS DMG CI + Cleanup | 0/TBD | Not started | - |
+| 9. Website — Refresh & Publish | 0/TBD | Not started | - |
 
 ---
 *Roadmap created: 2026-07-13*
-*Coverage: 34/34 v1 requirements mapped — no orphans, no duplicates*
+*Coverage: 36/36 v1 requirements mapped — no orphans, no duplicates*

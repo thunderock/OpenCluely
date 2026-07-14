@@ -62,6 +62,11 @@ Requirements for this milestone. Each maps to a roadmap phase.
 - [ ] **REL-03**: Any spawned helper binaries are correctly unpacked from asar (`asarUnpack`) so packaged builds can launch them
 - [ ] **REL-04**: Dead code is removed (`chat-window.js`, 0-byte `fallback-capture.service.js`, orphaned Gemini modal, dead IPC handlers) and the license is reconciled to one (currently ISC / Apache-2.0 / MIT stated in three places)
 
+### Website (WEB)
+
+- [ ] **WEB-01**: The existing `webapp/` static site is updated to reflect the shipped local-first product (private, on-device, always-on continuous copilot) — stale cloud-Gemini / API-key / interview-only framing removed; features, copy, screenshots/OG image, and download/install instructions refreshed to match the final README
+- [ ] **WEB-02**: A CI workflow deploys `webapp/` to GitHub Pages on push to `main` (repo owner enables Pages in settings)
+
 ## v2 Requirements
 
 Deferred to a future milestone. Tracked, not in this roadmap.
@@ -144,14 +149,16 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | REL-02 | Phase 8 | Pending |
 | REL-03 | Phase 8 | Pending |
 | REL-04 | Phase 8 | Pending |
+| WEB-01 | Phase 9 | Pending |
+| WEB-02 | Phase 9 | Pending |
 
 **Coverage:**
-- v1 requirements: 34 total
-- Mapped to phases: 34 ✓
+- v1 requirements: 36 total
+- Mapped to phases: 36 ✓
 - Unmapped: 0 ✓
 
-**Per-phase counts:** Phase 1: 4 · Phase 2: 2 · Phase 3: 6 · Phase 4: 4 · Phase 5: 5 · Phase 6: 5 · Phase 7: 4 · Phase 8: 4
+**Per-phase counts:** Phase 1: 4 · Phase 2: 2 · Phase 3: 6 · Phase 4: 4 · Phase 5: 5 · Phase 6: 5 · Phase 7: 4 · Phase 8: 4 · Phase 9: 2
 
 ---
 *Requirements defined: 2026-07-13*
-*Last updated: 2026-07-13 after roadmap creation (traceability mapped)*
+*Last updated: 2026-07-13 — added Phase 9 (Website) + WEB-01/02*
