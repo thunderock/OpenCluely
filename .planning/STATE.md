@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 1 of 8 (Foundation — Supervisor, Tests, Lint, Makefile)
-Plan: 1 of 5 complete (wave 1 executing; 3 waves)
+Plan: 2 of 5 complete (wave 1 executing; 3 waves)
 Status: Executing — Phase 1 wave 1 (plans 01-01, 01-02, 01-03 in parallel)
-Last activity: 2026-07-14 — 01-02 complete (pure VadSegmenter extracted from SpeechService + deterministic node:test suite)
+Last activity: 2026-07-14 — 01-01 complete (pure .env parse/format/upsert + skill/prompt normalization extracted, 25 node:test cases); 01-02 complete (VadSegmenter)
 
-Progress: [██░░░░░░░░] 20%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
@@ -49,6 +49,8 @@ Load-bearing sequencing decisions driving this roadmap:
 
 - Phase 1: VAD decision logic extracted to a pure `src/core/vad-segmenter.js` (action-return delegation: accumulate|flush|discard|noop); `SpeechService` keeps buffer storage/Whisper flush and delegates the VAD-enabled path — established the pure-logic extraction + node:test pattern (FND-01, plan 01-02).
 
+- Phase 1: `.env` string round-trip (`src/core/env-file.js`: parseEnv/formatEnvValue/upsertEnvContent) and skill/prompt normalization (`src/core/skill-normalizer.js`) extracted as pure fs-free modules; `main.js`/`first-run.js`/`prompt-loader.js` delegate with zero behavior change. Tests require only the extracted modules (quality gate); delegating files import only the symbols they use to stay lint-clean for 01-04 (FND-01, plan 01-01).
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -66,5 +68,5 @@ Research flags to resolve during planning (not blockers to starting):
 ## Session Continuity
 
 Last session: 2026-07-14
-Stopped at: Phase 1 wave 1 in progress — 01-02 (VAD segmenter) complete
+Stopped at: Phase 1 wave 1 in progress — 01-01 (.env + skill-normalizer) and 01-02 (VAD segmenter) complete
 Resume file: .planning/phases/01-foundation-supervisor-tests-lint-makefile/ (run /gsd:execute-phase 1)
