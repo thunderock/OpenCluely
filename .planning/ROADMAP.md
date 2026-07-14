@@ -32,7 +32,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `make run_tests` executes an automated suite covering the pure-logic pieces (VAD segmentation, `.env` parse, skill/prompt normalization), and a pushed PR carrying a lint violation fails the CI lint gate.
   3. The `ServiceSupervisor` can spawn a local process, health-check it (port/HTTP), restart it with backoff after the process is killed, and terminate it on app quit (SIGTERM→SIGKILL) — demonstrated by a test.
   4. The supervisor supports adopt-if-present / own-if-started, so it never kills a process it did not start.
-**Plans**: TBD (derived in /gsd:plan-phase)
+**Plans**: 5 plans (3 waves)
+- [ ] 01-01-PLAN.md — Extract .env + skill/prompt normalization into pure modules + node:test suites (Wave 1)
+- [ ] 01-02-PLAN.md — Extract VAD segmentation state machine, delegate SpeechService + node:test suite (Wave 1)
+- [ ] 01-03-PLAN.md — Generic ServiceSupervisor + fixture + demo suite proving SC3/SC4 (Wave 1)
+- [ ] 01-04-PLAN.md — ESLint 9 flat config + globals devDeps + clean fix pass (Wave 2)
+- [ ] 01-05-PLAN.md — Makefile (4 targets) + CI lint/test gate on PR + push:main (Wave 3)
 
 ### Phase 2: Provider Seam — Wrap Gemini Verbatim
 **Goal**: An `LLMProvider` abstraction exists with the existing Gemini code wrapped verbatim behind it, and the app still answers exactly as before — this is the sequencing keystone (never removal-first).
