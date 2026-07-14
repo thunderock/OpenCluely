@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 1 of 8 (Foundation — Supervisor, Tests, Lint, Makefile)
-Plan: 4 of 5 complete (wave 1 done; 01-04 lint gate done; 01-05 remains)
-Status: Executing — Phase 1: plans 01-01..01-04 complete; next 01-05 (Makefile + CI lint/test gates)
-Last activity: 2026-07-14 — 01-04 complete (ESLint 9 flat config, lean error-only gate; `npx eslint .` green across the whole repo; eslint+globals committed devDeps with a synced lockfile)
+Plan: 5 of 5 complete (all waves done — Phase 1 complete)
+Status: Phase 1 COMPLETE — plans 01-01..01-05 delivered; ready for Phase 2
+Last activity: 2026-07-14 — 01-05 complete (four-target Makefile FND-03 + new ci.yml FND-02 lint/test gate on PR + push:main across ubuntu+macOS on Node 20; SC1 verified 38/38 tests + lint clean, SC2 lint-fail-the-gate demonstrated locally)
 
-Progress: [████████░░] 80%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -55,6 +55,8 @@ Load-bearing sequencing decisions driving this roadmap:
 
 - Phase 1: ESLint 9 flat config (`eslint.config.js`, FND-02 lint half) is the whole-repo gate — lean error-only ruleset (`no-undef` + lenient `no-unused-vars` with `caughtErrors:'none'`), per-env files blocks (Node/CommonJS vs renderer `script` with browser + app-injected globals incl. `require` for chat-window dual-load), vendored/standalone dirs ignored but hand-written `lib/mathrender.js` linted. `eslint@^9` + `globals` are committed devDeps with a synced lockfile (npm-ci parity). `npx eslint .` is the exact gate 01-05's Makefile/CI will invoke; repo made green surgically (dead-code removal + `_`-prefixed unused args + removed stale disable directives), no mass reformat (plan 01-04).
 
+- Phase 1: Developer commands + CI gate wired (FND-03 + FND-02 CI half). `Makefile` has exactly the four locked tab-indented targets — `setup`/`setup-dev` (`npm ci`, reproducible from the committed lockfile), `run_tests` (`node --test test/*.test.js` — single-* glob so `test/fixtures/**` is never run as a test; never the bare `test/` dir), `lint` (`npx eslint .`). New `.github/workflows/ci.yml` (separate from the tag-only `release.yml`) gates lint + tests on `pull_request` + `push:main` across an ubuntu+macOS matrix on Node 20 using `npm ci --ignore-scripts` (skips the ~100MB Electron download — the lint/test job needs neither). Local == CI (same `npx eslint .` + `node --test`). SC1 verified end-to-end (38/38 tests, lint exit 0; setup/setup-dev confirmed non-destructively via recipe correctness + installed deps + `npm ci --dry-run` lockfile parity — no reinstall/Electron download); SC2 acceptance shape demonstrated locally (an intentional `no-undef` violation exits `npx eslint .` non-zero, then reverted). Real CI-on-a-PR confirmation pending the user's first push (delivery policy: never push automatically). Plan 01-05 — Phase 1 complete.
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -72,5 +74,5 @@ Research flags to resolve during planning (not blockers to starting):
 ## Session Continuity
 
 Last session: 2026-07-14
-Stopped at: Completed 01-04-PLAN.md — ESLint 9 lint gate (`npx eslint .`) green across the repo; next: 01-05 (Makefile + CI lint/test gates). NOTE for 01-05: run the node:test suite via `node --test test/*.test.js` (node v26 errors on `node --test test/`, treating the dir as a module).
-Resume file: .planning/phases/01-foundation-supervisor-tests-lint-makefile/ (run /gsd:execute-phase 1)
+Stopped at: Completed 01-05-PLAN.md — four-target Makefile (FND-03) + new ci.yml lint/test gate (FND-02) delivered and committed (0d237c7, c8b0bc9); SC1 + SC2 verified. Phase 1 (Foundation) is COMPLETE (plans 01-01..01-05). NOTE: CI-on-a-real-PR confirmation is pending the user's first push of a branch/PR (delivery policy: never push automatically).
+Resume file: .planning/phases/ — Phase 1 complete; ready to plan/execute Phase 2 (run /gsd:execute-phase 2 or the phase-2 planning entrypoint).
