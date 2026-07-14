@@ -80,7 +80,8 @@ Load-bearing sequencing decisions driving this roadmap:
 
 [From .planning/todos/pending/ — ideas captured during sessions]
 
-None yet.
+- **Natural-pause detection → match OpenWhispr's method (Phase 4 / STT-04–05).** Today the local mic path uses a hand-rolled energy-RMS VAD (`src/core/vad-segmenter.js`: adaptive noise floor + hysteresis + silence-hangover + pre-roll ring), and the Azure path uses Azure's own endpointing (`EndSilenceTimeoutMs`/`Speech_SegmentationSilenceTimeoutMs`=2000). OpenWhispr instead runs a **neural Silero VAD inside whisper.cpp's `whisper-server`** (`--vad --vad-model --vad-threshold --vad-min-speech-duration-ms --vad-min-silence-duration-ms --vad-max-speech-duration-s --vad-speech-pad-ms`). When Phase 4 replaces the STT layer with a supervised resident `whisper-server` (the OPENWHISPR-NOTES §5 recommendation), turn on its `--vad` Silero option so pause detection matches OpenWhispr; our current tunables (silenceHangoverMs / minUtteranceMs / maxUtteranceMs / preRollMs) map 1:1 onto those flags. — surfaced 2026-07-14 during the 03-07 gate.
+- **Auto-answer-on-natural-pause = the continuous flow (Phase 5/6), not Phase 3.** The "after any natural pause a relevant answer appears" core value = continuous capture (CONT-04) + md-context (CONT-05) + the relevance-gate (Phase 6: thresholds/cooldown/self-speech suppression). Phase 3's three entry points are on-demand (type / screenshot / ask) by design — the pause→auto-trigger lands later. — surfaced 2026-07-14.
 
 ### Blockers/Concerns
 
