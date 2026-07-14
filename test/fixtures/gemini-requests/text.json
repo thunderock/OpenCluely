@@ -1,0 +1,44 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "What is the time complexity of binary search?"
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "text": "Binary search runs in O(log n) time on a sorted array."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Context: DSA analysis request\n\nText to analyze:\nGiven an array of integers, return the indices of the two numbers that add up to a target."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "temperature": 0.7,
+    "topK": 32,
+    "topP": 0.9,
+    "maxOutputTokens": 4096,
+    "thinkingConfig": {
+      "thinkingBudget": 0
+    }
+  },
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "SYSTEM_PROMPT_FIXED"
+      }
+    ]
+  }
+}
