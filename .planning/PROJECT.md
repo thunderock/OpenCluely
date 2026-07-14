@@ -2,7 +2,7 @@
 
 ## What This Is
 
-OpenCluely is a stealth desktop AI overlay (invisible to screen-sharing on macOS/Windows) that gives real-time help during calls, interviews, and everyday work. This milestone transforms it from a cloud-Gemini, on-demand tool into a **local-first, always-on multimodal copilot**: on launch it self-starts local speech-to-text and model services, loads a folder of your own `.md` notes as standing context, then continuously listens and watches the screen and surfaces a suggested reply after each natural speech pause — for anything, not just coding.
+OpenCluely is a stealth desktop AI overlay (invisible to screen-sharing on macOS/Windows) — a **private, always-on general copilot that automatically suggests what to say or do next.** It watches your screen and hears the conversation, and after each natural pause surfaces a relevant reply suggestion — for any call, meeting, or task, **not just interviews or coding.** This milestone transforms it from a cloud-Gemini, on-demand tool into a **local-first, always-on multimodal copilot**: on launch it self-starts local speech-to-text and model services, loads a folder of your own `.md` notes as standing context, then continuously listens and watches the screen and surfaces a suggested reply after each natural speech pause.
 
 ## Core Value
 
@@ -88,7 +88,8 @@ After any natural pause in what you're saying or hearing, a **relevant, streamed
 | md-context = bounded concatenation, no RAG (v1) | "Few md files" fit in a context slot; simplest thing that works | — Pending |
 | macOS DMG unsigned universal (forge pattern) + `xattr` note | No Apple Developer account; forge proves the unsigned-universal `--publish` flow | — Pending |
 | Keep the OpenCluely name | Avoid rename churn and a collision with the existing separate "Pluely" project | ✓ Good |
+| **Reposition** messaging: general always-on copilot / **auto-reply suggester** (not interview-first) | Founder directive (2026-07-14): "not just for interviews" — interview is at most an optional skill, never the product identity; the OpenCluely name stays | ✓ Decided |
 | Establish tests + lint + `Makefile` baseline | Repo has ~0 automated coverage; personal-project convention | — Pending |
 
 ---
-*Last updated: 2026-07-13 after initialization*
+*Last updated: 2026-07-14 — repositioned from interview-copilot to general always-on copilot / auto-reply suggester (name unchanged)*

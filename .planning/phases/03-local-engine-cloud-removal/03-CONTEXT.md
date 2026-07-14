@@ -196,6 +196,37 @@ suggester … rebrand it."
     positioning line + the ROADMAP WEB-01 wording so the whole roadmap inherits the new
     framing. Not a new capability — a repositioning of existing scope.
 
+## Interview-string inventory (grep `-i interview`, 2026-07-14) — actionable scope
+
+**Edited now (planning docs):**
+- `PROJECT.md` — "What This Is" repositioned interview-copilot → general always-on copilot /
+  auto-reply suggester; Key Decisions row added. (ROADMAP/REQUIREMENTS WEB-01 already say to
+  *remove* interview framing — left as-is.)
+
+**Phase 3 execution (functional — GEN-01 must handle):**
+- ⚠ `src/core/request-builder.js:35` — hardcodes `"Assume you are in an interview and you need
+  to perform best in ${skill} mode."` into EVERY request's prompt assembly. **This is the #1
+  functional interview-ism — neutralize/generalize it for GEN-01.**
+- `prompts/dsa.md`, `prompts/programming.md` — skill prompts titled/worded as "interview
+  helper" ("programming interview assistant", "interview-ready implementation"). Broaden to
+  general-purpose coding per the coding-skill decision.
+- `onboarding.html:727,926` — in-app copy ("AI-powered interview & problem-solving copilot").
+- `src/core/skill-normalizer.js:24` (`behavioral-interview`→`behavioral` alias) +
+  `gemini.provider.js:1193` (behavioral keyword list incl. "interview") — incidental; the
+  provider one vanishes with Gemini removal.
+- `test/fixtures/gemini-requests/*.json` parity goldens embed the "interview" prompt — they
+  will change when the prompt generalizes (expected; not a regression).
+
+**Phase 8 (README/packaging):** `README.md:5,29,214` ("invisible AI interview copilot"),
+`package.json:166` build title `"OpenCluely Interview Assistant"`.
+
+**Phase 9 (WEB-01, already scoped):** `webapp/index.html` (title/meta/keywords/H1),
+`webapp/og-image.html:64`.
+
+**Left as-is (historical analysis, not positioning):** `.planning/research/*` +
+`.planning/codebase/*` mentions of the interview/meeting *use case* — interview stays a valid
+use case (and an optional skill), just not the product identity.
+
 </positioning>
 
 <deferred>
