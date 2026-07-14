@@ -15,3 +15,6 @@ Electron app being transformed from a cloud-Gemini on-demand overlay into a loca
 ## Gotchas
 - 2026-07-14 — gsd-tools CLI can't parse this repo's NARRATIVE ROADMAP/STATE format — `phase complete` / `state advance-plan` / `update-progress` silently no-op AND `phase complete` falsely reports `is_last_phase: true`. Mark phase/plan/requirement completion MANUALLY in ROADMAP.md + REQUIREMENTS.md; verify next-phase via ROADMAP, not the CLI's `is_last_phase`.
 - 2026-07-14 — Parallel GSD executors share one branch/worktree: a bare `git commit` after `git add <file>` commits the whole staged index and can sweep a sibling's staged files into your commit (mislabeling attribution — see `510a7da` labeled feat(01-03) but containing 01-01 files). Use explicit-pathspec commits: `git commit -- <files>`.
+
+## Workflow
+- 2026-07-13 — After each phase merges to `main`, capture that phase's durable learnings into BOTH global memory (`~/.claude/memory/`; source: `ashutosh_setup/setup/memory/`) and this file. Ashutosh handles all GitHub pushes + phase merges himself — never auto-push/PR/merge.
