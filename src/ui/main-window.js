@@ -465,7 +465,21 @@ class MainWindowUI {
                 });
                 this.loadSpeechAvailability();
             });
-            
+
+            // Local-engine safety net (03-06): the overlay listens for LLM
+            // responses/errors so that when Local can't answer (Ollama down /
+            // model missing / OOM) it can surface a one-click recovery panel.
+            // main.js broadcasts these to ALL windows, so the overlay sees them.
+            if (window.electronAPI.onLlmResponse) {
+                window.electronAPI.onLlmResponse((event, data) => this.handleLLMResponse(data || {}));
+            }
+            if (window.electronAPI.onTranscriptionLlmResponse) {
+                window.electronAPI.onTranscriptionLlmResponse((event, data) => this.handleLLMResponse(data || {}));
+            }
+            if (window.electronAPI.onLlmError) {
+                window.electronAPI.onLlmError((event, data) => this.handleLLMError(data || {}));
+            }
+
             // Global keyboard shortcuts
             document.addEventListener('keydown', (e) => {
                 if (e.altKey && e.key === 'r' && this.isInteractive) {
@@ -531,19 +545,280 @@ class MainWindowUI {
         };
         
         const displaySkill = skillNames[skill] || skill.toUpperCase();
-        
+
         logger.info('LLM response received', {
             component: 'MainWindowUI',
             skill: skill,
             displaySkill: displaySkill
         });
+
+        // Local-down detection: the transcription/text/image handlers in main.js
+        // degrade to LocalProvider.generateIntelligentFallbackResponse when the
+        // sole engine can't answer. Its canned body always says "Local model
+        // unavailable" and carries metadata.usedFallback. When we see it, offer a
+        // one-click recovery instead of leaving the user with a dead answer.
+        const meta = data.metadata || {};
+        const text = data.response || data.content || '';
+        const isLocalUnavailable = meta.usedFallback === true
+            || /local model unavailable/i.test(text);
+        if (isLocalUnavailable) {
+            this.checkAndShowLocalUnavailable();
+        } else {
+            // A real answer arrived — the engine recovered; clear any panel.
+            this.dismissLocalUnavailable();
+        }
     }
 
     handleLLMError(data) {
         logger.error('LLM error received', {
             component: 'MainWindowUI',
-            error: data.error
+            error: data && data.error
         });
+        // Any hard LLM error now means the local engine failed (Local is the
+        // sole engine post-PROV-07) — surface the recovery panel.
+        this.checkAndShowLocalUnavailable();
+    }
+
+    // Fetch owned-vs-adopted + three-level health, then render the recovery panel.
+    async checkAndShowLocalUnavailable() {
+        // Don't clobber an in-flight re-download with a fresh fetch/rebuild.
+        if (this._recoveryPulling) return;
+        let status = {};
+        try {
+            if (window.electronAPI && window.electronAPI.getModelStatus) {
+                status = (await window.electronAPI.getModelStatus()) || {};
+            }
+        } catch (error) {
+            logger.warn('getModelStatus failed while building recovery panel', {
+                component: 'MainWindowUI',
+                error: error.message
+            });
+        }
+        this.showLocalUnavailable(status);
+    }
+
+    // Inline, dismissible "Local model unavailable" panel. Actions are keyed off
+    // owned-vs-adopted so we NEVER offer to restart a daemon the app doesn't own.
+    showLocalUnavailable(status = {}) {
+        if (this._recoveryPulling) return; // keep the live progress panel intact
+
+        const owned = !!status.owned;
+        const adopted = !!status.adopted;
+        const serverUp = !!status.serverUp;
+        const modelPresent = !!status.modelPresent;
+        const modelResponds = !!status.modelResponds;
+
+        // Decide the message + the single primary action for this state.
+        let message;
+        let action = null; // { label, kind: 'restart' | 'repull' | 'settings' }
+        if (owned && !serverUp) {
+            message = 'Your local model engine (Ollama) stopped. Restart it to keep answering.';
+            action = { label: 'Restart Ollama', kind: 'restart' };
+        } else if (adopted && !serverUp) {
+            // Adopted daemon: it isn't ours to restart — guide the user instead.
+            message = "Your Ollama isn't running. Start it, or open Settings to reconfigure.";
+            action = { label: 'Open Settings', kind: 'settings' };
+        } else if (serverUp && !modelPresent) {
+            message = `The local model (${status.model || 'qwen3-vl:8b'}) isn't installed. Re-download it to continue.`;
+            action = { label: 'Re-download model', kind: 'repull' };
+        } else if (serverUp && !modelResponds) {
+            message = 'The local model failed to respond (it may be out of memory). Open Settings to pick a smaller model.';
+            action = { label: 'Open Settings', kind: 'settings' };
+        } else if (!serverUp) {
+            // Server down but ownership unknown — safe default is guidance, never a restart.
+            message = "Your local model engine (Ollama) isn't reachable. Start it, or open Settings.";
+            action = { label: 'Open Settings', kind: 'settings' };
+        } else {
+            message = "The local model couldn't answer that. Open Settings to check the model.";
+            action = { label: 'Open Settings', kind: 'settings' };
+        }
+
+        this._renderLocalUnavailablePanel(message, action);
+    }
+
+    // Inject the panel's spinner keyframes once. index.html doesn't ship Font
+    // Awesome or a .spinner class, so the recovery UI stays self-contained.
+    _ensureRecoveryStyles() {
+        if (document.getElementById('lu-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'lu-styles';
+        style.textContent = `
+            @keyframes lu-spin { to { transform: rotate(360deg); } }
+            .lu-spinner {
+                display: inline-block;
+                width: 11px; height: 11px;
+                border: 2px solid rgba(0, 0, 0, 0.25);
+                border-top-color: #0a0a0a;
+                border-radius: 50%;
+                animation: lu-spin 0.8s linear infinite;
+                vertical-align: -1px;
+                margin-right: 6px;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    _renderLocalUnavailablePanel(message, action) {
+        this.dismissLocalUnavailable();
+        this._ensureRecoveryStyles();
+
+        const panel = document.createElement('div');
+        panel.className = 'local-unavailable-panel';
+        panel.style.cssText = `
+            position: fixed;
+            top: 42px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 400px;
+            max-width: calc(100vw - 24px);
+            background: linear-gradient(135deg, rgba(20, 20, 20, 0.92) 0%, rgba(10, 10, 10, 0.88) 100%);
+            backdrop-filter: blur(18px);
+            border: 1px solid rgba(248, 113, 113, 0.35);
+            border-radius: 10px;
+            color: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+            padding: 14px 16px;
+            z-index: 1001;
+            -webkit-app-region: no-drag;
+            font-size: 12.5px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        `;
+        panel.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                <span style="color:#f87171; font-size:14px; line-height:1;">&#9888;</span>
+                <strong style="font-size:13px;">Local model unavailable</strong>
+                <button class="lu-dismiss" title="Dismiss" style="margin-left:auto; background:transparent; border:0; color:rgba(255,255,255,0.6); cursor:pointer; font-size:16px; line-height:1;">&times;</button>
+            </div>
+            <div class="lu-message" style="color:rgba(255,255,255,0.85); line-height:1.5; margin-bottom:12px;"></div>
+            <div class="lu-progress" style="display:none; margin-bottom:12px;">
+                <div style="height:8px; background:rgba(255,255,255,0.08); border-radius:6px; overflow:hidden;">
+                    <div class="lu-progress-fill" style="height:100%; width:0%; background:#4ade80; border-radius:6px; transition:width 0.3s ease;"></div>
+                </div>
+                <div class="lu-progress-status" style="margin-top:6px; font-size:11px; color:rgba(255,255,255,0.6);"></div>
+            </div>
+            <div style="display:flex; gap:8px; justify-content:flex-end;">
+                <button class="lu-primary" style="background:#f87171; border:0; border-radius:8px; color:#0a0a0a; font-weight:600; font-size:12px; padding:8px 14px; cursor:pointer;"></button>
+                <button class="lu-close" style="background:transparent; border:1px solid rgba(255,255,255,0.18); border-radius:8px; color:rgba(255,255,255,0.85); font-size:12px; padding:8px 14px; cursor:pointer;">Dismiss</button>
+            </div>
+        `;
+
+        panel.querySelector('.lu-message').textContent = message;
+        panel.querySelector('.lu-primary').textContent = action.label;
+        panel.querySelector('.lu-dismiss').addEventListener('click', () => this.dismissLocalUnavailable());
+        panel.querySelector('.lu-close').addEventListener('click', () => this.dismissLocalUnavailable());
+        panel.querySelector('.lu-primary').addEventListener('click', () => this._runRecoveryAction(action.kind, panel));
+
+        document.body.appendChild(panel);
+        this._localUnavailablePanel = panel;
+        this._resizeForPanel(panel);
+
+        logger.info('Local-unavailable recovery panel shown', {
+            component: 'MainWindowUI',
+            action: action.kind
+        });
+    }
+
+    async _runRecoveryAction(kind, panel) {
+        if (kind === 'settings') {
+            this.openSettings();
+            this.dismissLocalUnavailable();
+            return;
+        }
+
+        const primaryBtn = panel.querySelector('.lu-primary');
+        if (kind === 'restart') {
+            if (primaryBtn) {
+                primaryBtn.disabled = true;
+                primaryBtn.innerHTML = '<span class="lu-spinner"></span>Restarting…';
+            }
+            try {
+                const result = await window.electronAPI.recoverModel('restart');
+                if (result && result.serverUp) {
+                    this.dismissLocalUnavailable();
+                    this.showNotification('Ollama restarted — try again', 'success');
+                } else {
+                    // Couldn't restart (e.g. adopted daemon) — guide to Settings.
+                    this.showLocalUnavailable(result || {});
+                }
+            } catch (error) {
+                logger.error('Ollama restart failed', { component: 'MainWindowUI', error: error.message });
+                if (primaryBtn) {
+                    primaryBtn.disabled = false;
+                    primaryBtn.textContent = 'Restart Ollama';
+                }
+            }
+            return;
+        }
+
+        if (kind === 'repull') {
+            this._recoveryPulling = true;
+            const progress = panel.querySelector('.lu-progress');
+            const fill = panel.querySelector('.lu-progress-fill');
+            const pstatus = panel.querySelector('.lu-progress-status');
+            if (progress) progress.style.display = 'block';
+            if (primaryBtn) {
+                primaryBtn.disabled = true;
+                primaryBtn.innerHTML = '<span class="lu-spinner"></span>Downloading…';
+            }
+            this._resizeForPanel(panel);
+
+            let unsubscribe = null;
+            if (window.electronAPI.onModelPullProgress) {
+                unsubscribe = window.electronAPI.onModelPullProgress((p) => {
+                    if (!p) return;
+                    if (fill && typeof p.percent === 'number') fill.style.width = `${p.percent}%`;
+                    if (pstatus && p.status) {
+                        pstatus.textContent = p.percent != null ? `${p.status} — ${p.percent}%` : p.status;
+                    }
+                });
+            }
+            try {
+                const result = await window.electronAPI.recoverModel('repull');
+                this._recoveryPulling = false;
+                if (result && result.ok) {
+                    this.dismissLocalUnavailable();
+                    this.showNotification('Model re-downloaded — try again', 'success');
+                } else if (pstatus) {
+                    pstatus.textContent = (result && result.error) || 'Download failed — try again';
+                    if (primaryBtn) { primaryBtn.disabled = false; primaryBtn.textContent = 'Re-download model'; }
+                }
+            } catch (error) {
+                this._recoveryPulling = false;
+                logger.error('Model re-download failed', { component: 'MainWindowUI', error: error.message });
+                if (pstatus) pstatus.textContent = error.message || 'Download error';
+                if (primaryBtn) { primaryBtn.disabled = false; primaryBtn.textContent = 'Re-download model'; }
+            } finally {
+                if (typeof unsubscribe === 'function') {
+                    try { unsubscribe(); } catch (_) { /* ignore */ }
+                } else if (window.electronAPI.removeAllListeners) {
+                    try { window.electronAPI.removeAllListeners('model-pull-progress'); } catch (_) { /* ignore */ }
+                }
+            }
+        }
+    }
+
+    _resizeForPanel(panel) {
+        // Grow the compact command bar just enough to reveal the floating panel.
+        setTimeout(() => {
+            if (!panel || !panel.isConnected) return;
+            if (window.electronAPI && window.electronAPI.resizeWindow) {
+                const rect = panel.getBoundingClientRect();
+                const width = Math.max(520, Math.ceil(rect.width) + 24);
+                const height = Math.ceil(rect.bottom + 16);
+                window.electronAPI.resizeWindow(width, height);
+            }
+        }, 50);
+    }
+
+    dismissLocalUnavailable() {
+        if (!this._localUnavailablePanel) return; // no panel → cheap no-op on normal responses
+        this._recoveryPulling = false;
+        if (this._localUnavailablePanel.parentNode) {
+            this._localUnavailablePanel.parentNode.removeChild(this._localUnavailablePanel);
+        }
+        this._localUnavailablePanel = null;
+        // Shrink the window back to the compact command bar.
+        this.resizeWindowToContent();
     }
 
     setupKeyboardShortcuts() {
