@@ -22,7 +22,7 @@ Requirements for this milestone. Each maps to a roadmap phase.
 - [ ] **PROV-04**: `LocalProvider` answers a prompt that includes a screenshot as multimodal input to the local model
 - [ ] **PROV-05**: A `LocalModelManager` adopts a running Ollama if present (else starts one), ensures the configured model (`qwen3-vl:8b`) is present — pulling with visible, resumable progress if missing — caches it at Ollama's default location, and keeps it resident (`keep_alive:-1`)
 - [ ] **PROV-06**: The user can choose provider and model in settings; Local is the default
-- [ ] **PROV-07**: Gemini and Azure are fully removed (SDKs, hardcoded hosts, cert-verify bypass, Azure browser-DOM polyfill) — done last, after Local is proven
+- [ ] **PROV-07**: Gemini is fully removed (SDK, hardcoded hosts, cert-verify bypass) — done last, after Local is proven. (Azure is STT-only; its SDK + browser-DOM polyfill removal moved to Phase 4 / STT-05 so voice keeps working.)
 - [ ] **PROV-08**: `ClaudeProvider` answers a prompt (+ optional screenshot via temp file) by invoking `claude -p` headless, reusing existing terminal auth, with streaming/collection, timeout, and error handling
 - [ ] **PROV-09**: `CodexProvider` answers a prompt (+ optional screenshot via `-i`) by invoking `codex exec` headless, reusing existing terminal auth
 - [ ] **PROV-10**: The user can escalate the current question to Claude/Codex on demand; backups also auto-fallback when Local is unavailable; backups never run on the per-pause path
@@ -34,6 +34,7 @@ Requirements for this milestone. Each maps to a roadmap phase.
 - [ ] **STT-02**: The STT model downloads and caches locally with visible progress on first run
 - [ ] **STT-03**: A continuous "ambient listening" mode keeps the audio stream open from launch to quit, transcribing on VAD-detected natural pauses (reusing the existing VAD + hallucination filter)
 - [ ] **STT-04**: On macOS the app captures system (loopback) audio via ScreenCaptureKit as a separate channel from the mic, so a question asked by the other party is transcribed
+- [ ] **STT-05**: The Azure Speech SDK and its ~380-line browser-DOM polyfill are fully removed (deferred from Phase 3 — Azure is STT-only; kept through Phase 3 so voice keeps working, deleted alongside the resident-STT replacement)
 
 ### Continuous Mode (CONT)
 
@@ -125,7 +126,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | PROV-04 | Phase 3 | Pending |
 | PROV-05 | Phase 3 | Pending |
 | PROV-06 | Phase 3 | Pending |
-| PROV-07 | Phase 3 | Pending |
+| PROV-07 | Phase 3 (Gemini) | Pending |
 | PROV-08 | Phase 7 | Pending |
 | PROV-09 | Phase 7 | Pending |
 | PROV-10 | Phase 7 | Pending |
@@ -134,6 +135,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | STT-02 | Phase 4 | Pending |
 | STT-03 | Phase 4 | Pending |
 | STT-04 | Phase 4 | Pending |
+| STT-05 | Phase 4 (Azure removal, from PROV-07) | Pending |
 | CONT-01 | Phase 6 | Pending |
 | CONT-02 | Phase 6 | Pending |
 | CONT-03 | Phase 6 | Pending |
@@ -153,12 +155,12 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | WEB-02 | Phase 9 | Pending |
 
 **Coverage:**
-- v1 requirements: 36 total
-- Mapped to phases: 36 ✓
+- v1 requirements: 37 total
+- Mapped to phases: 37 ✓
 - Unmapped: 0 ✓
 
-**Per-phase counts:** Phase 1: 4 · Phase 2: 2 · Phase 3: 6 · Phase 4: 4 · Phase 5: 5 · Phase 6: 5 · Phase 7: 4 · Phase 8: 4 · Phase 9: 2
+**Per-phase counts:** Phase 1: 4 · Phase 2: 2 · Phase 3: 6 · Phase 4: 5 · Phase 5: 5 · Phase 6: 5 · Phase 7: 4 · Phase 8: 4 · Phase 9: 2
 
 ---
 *Requirements defined: 2026-07-13*
-*Last updated: 2026-07-13 — added Phase 9 (Website) + WEB-01/02*
+*Last updated: 2026-07-14 — split PROV-07: Gemini removal stays Phase 3; Azure removal → new STT-05/Phase 4 (Azure is STT-only, kept so voice works)*
