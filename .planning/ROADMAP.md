@@ -127,7 +127,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation — Supervisor, Tests, Lint, Makefile | 0/TBD | Not started | - |
+| 1. Foundation — Supervisor, Tests, Lint, Makefile | 0/5 | Planned | - |
 | 2. Provider Seam — Wrap Gemini Verbatim | 0/TBD | Not started | - |
 | 3. Local Engine + Cloud Removal | 0/TBD | Not started | - |
 | 4. Continuous Hearing — Resident STT + Ambient Listening | 0/TBD | Not started | - |
