@@ -17,4 +17,5 @@ Electron app being transformed from a cloud-Gemini on-demand overlay into a loca
 - 2026-07-14 — Parallel GSD executors share one branch/worktree: a bare `git commit` after `git add <file>` commits the whole staged index and can sweep a sibling's staged files into your commit (mislabeling attribution — see `510a7da` labeled feat(01-03) but containing 01-01 files). Use explicit-pathspec commits: `git commit -- <files>`.
 
 ## Workflow
+- 2026-07-13 — Merge every phase to `main` when complete, BEFORE planning/branching the next phase, so phases don't entangle on one branch (next phase branches off freshly-merged main). Applies to every phase. Ashutosh does the merge + push himself; Claude flags the merge point and, post-merge, branches the next phase off main + captures learnings. (Lesson: Phase 2 was planned on the unmerged Phase 1 branch — entangled.)
 - 2026-07-13 — After each phase merges to `main`, capture that phase's durable learnings into BOTH global memory (`~/.claude/memory/`; source: `ashutosh_setup/setup/memory/`) and this file. Ashutosh handles all GitHub pushes + phase merges himself — never auto-push/PR/merge.
