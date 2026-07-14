@@ -386,6 +386,7 @@ const { spawn, spawnSync } = require('child_process');
 const { EventEmitter } = require('events');
 const logger = require('../core/logger').createServiceLogger('SPEECH');
 const config = require('../core/config');
+const VadSegmenter = require('../core/vad-segmenter');
 
 let sdk = null;
 try {
@@ -424,6 +425,7 @@ class SpeechService extends EventEmitter {
     this.pendingFinal = false;
     this.audioProgram = null;
     this.whisperCommand = null;
+    this._segmenter = new VadSegmenter();
     this._resetVadState();
 
     this.initializeClient();
@@ -714,14 +716,12 @@ class SpeechService extends EventEmitter {
    * both the renderer (Web Audio) and native (sox/arecord) capture paths.
    */
   _resetVadState() {
+    // Legacy (VAD-disabled) path + watchdog still read these; the full
+    // speech/silence/noise-floor/pre-roll state now lives in this._segmenter.
     this.vadSpeaking = false;        // currently inside an utterance
     this.vadSpeechMs = 0;            // accumulated voiced audio in this segment
-    this.vadSilenceMs = 0;           // trailing silence since last voiced chunk
-    this.vadNoiseFloor = 0;          // adaptive EMA of background energy
-    this.vadNoiseInit = false;       // has the noise floor been seeded
-    this.vadPreRoll = [];            // ring of recent pre-speech chunks
-    this.vadPreRollMs = 0;           // duration held in the pre-roll ring
     this.vadLastChunkAt = 0;         // timestamp of the last ingested chunk
+    this._segmenter.reset();
   }
 
   /**
@@ -751,8 +751,8 @@ class SpeechService extends EventEmitter {
       // If we're mid-utterance and no audio has arrived recently, the mic may
       // have stalled — flush what we captured rather than holding it forever.
       const sinceLastChunk = this.vadLastChunkAt ? Date.now() - this.vadLastChunkAt : 0;
-      const stalled = this.vadSpeaking && sinceLastChunk > 1500;
-      const tooLong = this.vadSpeaking && this.vadSpeechMs >= this._getMaxUtteranceMs();
+      const stalled = this._segmenter.speaking && sinceLastChunk > 1500;
+      const tooLong = this._segmenter.speaking && this._segmenter.speechMs >= this._getMaxUtteranceMs();
       if (stalled || tooLong) {
         this._endUtteranceFlush();
       }
@@ -772,23 +772,6 @@ class SpeechService extends EventEmitter {
     }
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     this._ingestWhisperAudio(buffer);
-  }
-
-  /**
-   * Compute the RMS energy (normalized to 0..1) of a 16-bit little-endian PCM
-   * buffer. Used as the voice-activity signal.
-   */
-  _chunkRmsEnergy(buffer) {
-    const sampleCount = Math.floor(buffer.length / 2);
-    if (sampleCount === 0) {
-      return 0;
-    }
-    let sumSquares = 0;
-    for (let i = 0; i < sampleCount; i++) {
-      const sample = buffer.readInt16LE(i * 2) / 32768;
-      sumSquares += sample * sample;
-    }
-    return Math.sqrt(sumSquares / sampleCount);
   }
 
   /**
@@ -813,79 +796,26 @@ class SpeechService extends EventEmitter {
     }
 
     this.vadLastChunkAt = Date.now();
-    const chunkMs = this._chunkDurationMs(buffer);
-    const energy = this._chunkRmsEnergy(buffer);
-
-    const floor = this._getVadEnergyFloor();
-    // Seed / adapt the background noise floor while not actively speaking so
-    // the threshold tracks the room rather than a hard-coded constant. Seed
-    // conservatively: if the very first chunk is already loud (the user started
-    // talking immediately), clamp to the configured floor so a high seed can't
-    // push the enter-threshold out of reach and stall VAD for the whole session.
-    if (!this.vadNoiseInit) {
-      this.vadNoiseFloor = Math.min(energy, floor);
-      this.vadNoiseInit = true;
+    // Building the tuning object from the getters each call preserves the
+    // original per-chunk re-read of settings. The segmenter owns the VAD
+    // decision and returns an action; buffer storage stays here.
+    const action = this._segmenter.ingest(buffer, {
+      energyFloor: this._getVadEnergyFloor(),
+      silenceHangoverMs: this._getSilenceHangoverMs(),
+      minUtteranceMs: this._getMinUtteranceMs(),
+      maxUtteranceMs: this._getMaxUtteranceMs(),
+      preRollMs: this._getPreRollMs(),
+    });
+    for (const buf of action.buffers) {
+      this.segmentBuffers.push(buf);
+      this.segmentBytes += buf.length;
     }
-    // Hysteresis: it takes more energy to *start* an utterance than to keep
-    // one going, so a brief dip mid-sentence doesn't end it prematurely.
-    const enterThreshold = Math.max(floor, this.vadNoiseFloor * 2.5);
-    const exitThreshold = Math.max(floor * 0.7, this.vadNoiseFloor * 1.6);
-    const isVoiced = this.vadSpeaking ? energy >= exitThreshold : energy >= enterThreshold;
-
-    if (!this.vadSpeaking) {
-      if (isVoiced) {
-        // Speech onset: prepend the pre-roll so the first syllable survives.
-        this.vadSpeaking = true;
-        this.vadSpeechMs = 0;
-        this.vadSilenceMs = 0;
-        for (const pre of this.vadPreRoll) {
-          this.segmentBuffers.push(pre);
-          this.segmentBytes += pre.length;
-        }
-        this.vadPreRoll = [];
-        this.vadPreRollMs = 0;
-        this.segmentBuffers.push(buffer);
-        this.segmentBytes += buffer.length;
-        this.vadSpeechMs += chunkMs;
-      } else {
-        // Background: adapt the noise floor and keep a short pre-roll ring.
-        this.vadNoiseFloor = this.vadNoiseFloor * 0.95 + energy * 0.05;
-        this.vadPreRoll.push(buffer);
-        this.vadPreRollMs += chunkMs;
-        const preRollLimit = this._getPreRollMs();
-        while (this.vadPreRollMs > preRollLimit && this.vadPreRoll.length > 1) {
-          const dropped = this.vadPreRoll.shift();
-          this.vadPreRollMs -= this._chunkDurationMs(dropped);
-        }
-      }
-      return;
-    }
-
-    // Already speaking: keep capturing (including trailing silence so word
-    // endings aren't clipped) and watch for a pause that ends the utterance.
-    this.segmentBuffers.push(buffer);
-    this.segmentBytes += buffer.length;
-    if (isVoiced) {
-      this.vadSpeechMs += chunkMs;
-      this.vadSilenceMs = 0;
-    } else {
-      this.vadSilenceMs += chunkMs;
-    }
-
-    const pausedLongEnough = this.vadSilenceMs >= this._getSilenceHangoverMs();
-    const haveRealSpeech = this.vadSpeechMs >= this._getMinUtteranceMs();
-    const tooLong = this.vadSpeechMs >= this._getMaxUtteranceMs();
-
-    if ((pausedLongEnough && haveRealSpeech) || tooLong) {
+    if (action.type === 'flush') {
       this._endUtteranceFlush();
-    } else if (pausedLongEnough && !haveRealSpeech) {
-      // Just noise (cough/click) with no real speech — discard, don't waste a
-      // Whisper spawn or risk a hallucinated transcript.
+    } else if (action.type === 'discard') {
+      // Net-identical to the original push-then-clear: drop the whole segment.
       this.segmentBuffers = [];
       this.segmentBytes = 0;
-      this.vadSpeaking = false;
-      this.vadSpeechMs = 0;
-      this.vadSilenceMs = 0;
     }
   }
 
@@ -893,17 +823,14 @@ class SpeechService extends EventEmitter {
   _endUtteranceFlush() {
     this.vadSpeaking = false;
     this.vadSpeechMs = 0;
-    this.vadSilenceMs = 0;
-    this.vadPreRoll = [];
-    this.vadPreRollMs = 0;
+    this._segmenter.endUtterance();
     this._flushWhisperSegment({ final: false }).catch((error) => {
       logger.error('Whisper segment transcription failed', { error: error.message });
     });
   }
 
   _chunkDurationMs(buffer) {
-    // 16kHz mono 16-bit => 2 bytes/sample => 32 bytes/ms.
-    return buffer.length / 32;
+    return VadSegmenter.chunkDurationMs(buffer);
   }
 
   stopRecording() {
