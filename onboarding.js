@@ -60,9 +60,12 @@
     finished: false,
   };
 
-  // Screens are: welcome → apikey → speech → whisper? → finish
-  // The whisper screen is only visited if state.speechProvider === 'whisper'
-  const stepScreens = ['welcome', 'apikey', 'speech'];
+  // Screens are: welcome → speech → whisper? → ollama → model-pull → finish
+  // The whisper screen is only visited if state.speechProvider === 'whisper'.
+  // The Gemini 'apikey' screen is NO LONGER a forced onboarding step: Local is
+  // the default engine, so the app works with no cloud key. The Gemini key is
+  // optional and lives in Settings during the transition (removed at PROV-07).
+  const stepScreens = ['welcome', 'speech'];
 
   // ── Step rendering ────────────────────────────────────────────────
   function totalSteps() {
@@ -124,7 +127,7 @@
   // The local-model screens (ollama guide-install + qwen3-vl:8b pull) always
   // run: Local is the default engine, so this is core setup, not optional.
   function computeScreenOrder() {
-    const out = ['welcome', 'apikey', 'speech'];
+    const out = ['welcome', 'speech'];
     if (state.speechProvider === 'whisper') out.push('whisper');
     if (state.speechProvider === 'whisper') out.push('model-download');
     out.push('ollama');
