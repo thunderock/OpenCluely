@@ -9,30 +9,30 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 
 ## Current Position
 
-Phase: 3 of 9 (Local Engine + Cloud Removal) — EXECUTING (Wave 1 of 5 complete); Phases 1 & 2 COMPLETE (merged to main)
-Plan: 2 of 8 executed — Wave 1 done (03-01 config/deps foundation, 03-02 GEN-01 prompts). Next: Wave 2 (03-03 LocalProvider, 03-04 LocalModelManager). Waves 4-5 are the double-gated prove→remove checkpoints.
-Status: Wave 1 complete & spot-checked (zero cross-contamination via pathspec commits; 63/63 tests, eslint 0). 03-01: openai+ollama deps + config.llm→{provider,local,gemini} (provider defaults 'local', registry NOT flipped — app still runs the proven Gemini path). 03-02: GEN-01 — General reply-suggester default + opt-in Coding skill, interview scrub done for the functional prompt sources.
-Last activity: 2026-07-14 — Wave 1 executed in parallel: 03-01 (commits 794ce1f deps, 0b2cea6 config, a1c9e79 summary) + 03-02 (commits 22cae12/b5fe940/1147042 + 5539f09 summary). Orchestrator reconciled STATE from both executors' deltas. Spot-check confirmed each commit touched only its own plan's files.
+Phase: 3 of 9 (Local Engine + Cloud Removal) — EXECUTING (Wave 2 of 5 complete); Phases 1 & 2 COMPLETE (merged to main)
+Plan: 4 of 8 executed — Waves 1-2 done. Next: Wave 3 (03-05 provider/model settings UI, 03-06 first-run + Local-down recovery UX). Waves 4-5 are the double-gated prove→remove checkpoints.
+Status: Wave 2 complete & spot-checked — LocalProvider + LocalModelManager built and INTEGRATE GREEN together (full suite 83/83, eslint 0; zero cross-contamination). 03-03: LocalProvider (text stream + screenshot over /v1 via openai SDK; serialize() the single wire site). The registry now selects per config.llm.provider (default 'local'), so Local is the default engine — Gemini stays registered/selectable via LLM_PROVIDER=gemini as the fallback until PROV-07 removal; Local degrades gracefully if Ollama is down. 03-04: LocalModelManager (first ServiceSupervisor consumer — adopt/own Ollama, resumable pull, keep_alive:-1 resident, preflight warn, 3-level health) + provider-neutral local IPC. NOTE: Local's default status is WIRING-verified only; it is PROVEN on a real machine at the 03-07 human-verify gate before any Gemini deletion.
+Last activity: 2026-07-14 — Wave 2 executed in parallel: 03-03 (commits 6e3b799/0d9a902/38cbb1a + acbe382 summary) + 03-04 (commits ee0829f/e7b5fb0/448cfbc + 01f0b18 summary). Orchestrator ran the integration gate (83/83, eslint 0) and reconciled STATE. Each commit touched only its own plan's files.
 
-Progress: [███░░░░░░░] Milestone v1.0 — 2 of 9 phases complete; Phase 3 executing (2/8 plans, Wave 1/5 done)
+Progress: [████░░░░░░] Milestone v1.0 — 2 of 9 phases complete; Phase 3 executing (4/8 plans, Wave 2/5 done)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
+- Total plans completed: 7
 - Average duration: ~12 min
-- Total execution time: 60 min
+- Total execution time: 81 min
 
 **By Phase:**
 
 | Phase | Plans | Total  | Avg/Plan |
 |-------|-------|--------|----------|
 | 02    | 3     | 44 min | ~15 min  |
-| 03    | 2     | 16 min | ~8 min   |
+| 03    | 4     | 37 min | ~9 min   |
 
 **Recent Trend:**
-- Last 5 plans: 02-02 (15 min, 2 tasks, 7 files), 02-03 (~20 min, 2 tasks + waived checkpoint, 3 files), 03-01 (~3 min, 2 tasks, 3 files), 03-02 (13 min, 3 tasks, 12 files)
-- Trend: → steady (Wave 1 ran in parallel, pathspec-safe; additive foundation + GEN-01)
+- Last 5 plans: 03-01 (~3 min, 2 tasks, 3 files), 03-02 (13 min, 3 tasks, 12 files), 03-03 (~10 min, 3 tasks, 3 files), 03-04 (11 min, 3 tasks, 4 files)
+- Trend: → steady (Waves 1-2 parallel, pathspec-safe; core local engine built, integrates green 83/83)
 
 *Updated after each plan completion*
 
@@ -47,6 +47,10 @@ Load-bearing sequencing decisions driving this roadmap:
 - Phase 1: One generic `ServiceSupervisor`, configured twice — must precede the model server (P3) and STT server (P4).
 - Phase 5: DOMPurify (SEC-01) + macOS TCC recovery (SEC-02) ship in the SAME phase as continuous capture (CONT-04) / md-context (CONT-05) — the features that create the threat surface.
 - Local runtime = Ollama ≥ 0.19 (`qwen3-vl:8b`), adopt-if-present / own-if-started; cache at `~/.ollama/models` (not `~/.cache`).
+
+- Phase 3: PROV-05 (LocalModelManager) landed (plan 03-04). First real `ServiceSupervisor` consumer — thin configurator, `adopt:true` + HTTP health on 11434, SIGTERM→SIGKILL on the owned child; NO new deps (consumes the 03-01 `ollama` client). `ensureModel`/`pullModel` = resumable sha256-verified pull emitting `{status,percent,completed,total}`; cache at Ollama default `~/.ollama/models`. `keep_alive:-1` belt-and-suspenders (`OLLAMA_KEEP_ALIVE` env when we spawn + an always-on `warmUp generate({keep_alive:-1})` covering an adopted daemon too). `getStatus` fuses owned-vs-adopted + three health fields (`serverUp`/`modelPresent`/`modelResponds`). `_ownsSupervisor` guard: the binary-not-found→not-installed check fires only for a self-built supervisor, so an injected supervisor is trusted (adopt/own provable network-free) while guide-install UX holds in prod. Lifecycle: lazy `getLocalModelManager()`, `start()` in `onAppReady` (isolated try/catch, never blocks startup), `stop()` fire-and-forget in `onWillQuit` (no-op if adopted). IPC is provider-neutral/local-named (`download-model`, `get-model-status`, `list-installed-models`, `model-preflight`, `recover-model`, `test-provider-connection`) + `model-pull-progress` stream + preload bridges — survives PROV-07; `recover-model 'restart'` only restarts a daemon we own. Whisper IPC untouched. 83/83, eslint 0. Commits ee0829f/e7b5fb0/448cfbc/01f0b18.
+
+- Phase 3: LocalProvider landed (plan 03-03, PROV-03/PROV-04/SC4). `LocalProvider extends LLMProvider` mirrors GeminiProvider's full public surface so the facade re-export keeps every `main.js llmService.*` call-site unchanged. `serialize(neutral)` is the ONLY OpenAI wire-shape site: system prefix (`systemPrompt`+`mdContext`, mdContext wired but empty until Phase 5), neutral `'model'`→OpenAI `'assistant'` history rename, images as nested `{type:'image_url',image_url:{url:'data:<mime>;base64,<b64>'}}` parts (RESEARCH Flag 2, not the bare-string variant). Transport = `openai` SDK (`chat.completions.create`, `baseURL=host/v1`, `apiKey:'ollama'`); `keep_alive:-1` in the body as defense-in-depth (authoritative residency = 03-04 warm-up). Counters increment only in `process*` (not `generate`/`generateStream`) so a `process*→generateStream` delegation counts once. Registry flip: `selected = config.get('llm.provider')` (was hardcoded `'gemini'`) — Local is now the config-default engine, both `{gemini,local}` registered, `getSelected()` hardened never-undefined; Gemini selectable via `LLM_PROVIDER=gemini` until PROV-07. Network-free constructor (never throws Ollama-down). Live streaming round-trip against real Ollama deferred to 03-07. Commits 6e3b799/0d9a902/38cbb1a/acbe382.
 
 - Phase 3: GEN-01 generalization landed (plan 03-02). Default skill = concise **General** reply-suggester; DSA retired as first-class and folded into an opt-in **Coding** skill (canonical `programming`). Shipped skills = General (default) + Coding only. Both prompt sources de-interviewed: the `.md` path (`prompt-loader` whitelists `['general','programming']`; new `prompts/general.md`; `dsa.md` deleted) and the hardcoded transcription prompt (`request-builder.js:35` interview line removed; rewritten short-by-default / expand-on-depth, H1 + code-fence preserved). `dsa`/`data-structures`/`algorithms` aliases fold to `programming` and the language-injection `case` fires for `programming`, so coding-optimality behavior + `getSkillPrompt('dsa')` still resolve. `main.js` default `activeSkill` `dsa`→`general`; settings picker + onboarding copy repositioned; transcription golden regenerated (retires at PROV-07). 63/63, eslint 0. Commits 22cae12/b5fe940/1147042/5539f09. NOTE: FUNCTIONAL scrub only — residual copy-only `'dsa'` strings remain elsewhere (see Blockers → Deferred), for README P8 / website P9.
 
@@ -89,5 +93,5 @@ Deferred (captured, not blocking):
 ## Session Continuity
 
 Last session: 2026-07-14
-Stopped at: Executing Phase 3 via /gsd:execute-phase 3 (orchestrator = this session). Wave 1 of 5 COMPLETE + spot-checked — 03-01 (config/deps foundation) + 03-02 (GEN-01 prompts) ran in parallel, pathspec-safe with zero cross-contamination; 63/63 node:test, eslint 0. Orchestrator folded both executors' STATE deltas into this file. Registry still resolves to GeminiProvider (app on proven Gemini path — never-removal-first honored).
-Resume file: .planning/phases/03-local-engine-cloud-removal/ — mid /gsd:execute-phase 3. NEXT = Wave 2: 03-03 (LocalProvider — text stream + screenshot over 127.0.0.1:11434/v1) + 03-04 (LocalModelManager — adopt/own Ollama, pull qwen3-vl:8b, resident), both depend on 03-01, autonomous, parallel. Then Wave 3 (settings UI + first-run/recovery UX). Waves 4-5 are the double-gated checkpoints: 03-07 human-verify "Local proven" (needs real Ollama + qwen3-vl:8b pulled) → 03-08 hard manual "approved" for the irreversible Gemini deletion (Azure STT kept → Phase 4). All commits local/unpushed.
+Stopped at: Executing Phase 3 via /gsd:execute-phase 3 (orchestrator = this session). Waves 1-2 of 5 COMPLETE + spot-checked + integration-gated (full suite 83/83, eslint 0; every commit pathspec-safe, zero cross-contamination). Wave 2 built the core local engine: 03-03 LocalProvider (text stream + screenshot over /v1) + 03-04 LocalModelManager (adopt/own Ollama, resumable pull, resident). Registry now selects per config.llm.provider (default 'local'); Local is WIRING-verified only — PROVEN on a real machine at the 03-07 gate.
+Resume file: .planning/phases/03-local-engine-cloud-removal/ — mid /gsd:execute-phase 3. NEXT = Wave 3: 03-05 (provider/model settings UI — Local default, curated + "any installed" model list, Model status/health/test) + 03-06 (first-run onboarding guide-install + auto-pull with progress + preflight, and in-overlay Local-down recovery), both autonomous, parallel; they consume 03-04's getStatus/listInstalledModels/pullModel/preflight/recoverModel/onModelPullProgress. Then Waves 4-5 = double-gated checkpoints: 03-07 human-verify "Local proven" (needs real Ollama + qwen3-vl:8b pulled) → 03-08 hard manual "approved" for the irreversible Gemini deletion (Azure STT kept → Phase 4). All commits local/unpushed.
