@@ -16,8 +16,8 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 ### LLM Providers (PROV)
 
-- [ ] **PROV-01**: An `LLMProvider` interface exists (`generate` / `generateStream` / `isAvailable` / `testConnection`), and the existing Gemini code is wrapped verbatim as a provider with every `main.js` call-site unchanged (the app still works on Gemini after this step)
-- [ ] **PROV-02**: A `RequestBuilder` converts (skill, text/image, history, md-context) into one neutral request shape shared by all providers (no prompt logic inside providers)
+- [x] **PROV-01**: An `LLMProvider` interface exists (`generate` / `generateStream` / `isAvailable` / `testConnection`), and the existing Gemini code is wrapped verbatim as a provider with every `main.js` call-site unchanged (the app still works on Gemini after this step)
+- [x] **PROV-02**: A `RequestBuilder` converts (skill, text/image, history, md-context) into one neutral request shape shared by all providers (no prompt logic inside providers)
 - [ ] **PROV-03**: `LocalProvider` answers a text prompt from a local model over the OpenAI-compatible endpoint (`127.0.0.1:11434/v1`), streaming tokens
 - [ ] **PROV-04**: `LocalProvider` answers a prompt that includes a screenshot as multimodal input to the local model
 - [ ] **PROV-05**: A `LocalModelManager` adopts a running Ollama if present (else starts one), ensures the configured model (`qwen3-vl:8b`) is present — pulling with visible, resumable progress if missing — caches it at Ollama's default location, and keeps it resident (`keep_alive:-1`)
@@ -119,8 +119,8 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | FND-02 | Phase 1 | Complete |
 | FND-03 | Phase 1 | Complete |
 | FND-04 | Phase 1 | Complete |
-| PROV-01 | Phase 2 | Pending |
-| PROV-02 | Phase 2 | Pending |
+| PROV-01 | Phase 2 | Complete |
+| PROV-02 | Phase 2 | Complete |
 | PROV-03 | Phase 3 | Pending |
 | PROV-04 | Phase 3 | Pending |
 | PROV-05 | Phase 3 | Pending |

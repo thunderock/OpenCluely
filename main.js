@@ -287,27 +287,17 @@ class ApplicationController {
   }
 
   setupNetworkConfiguration() {
-    // Configure session to handle network requests better
+    // Gemini's cert-verify bypass + UA override now live inside the Gemini
+    // provider (SC3). Delegate to whichever provider is selected; a provider
+    // that needs no network hardening simply won't implement this, so the
+    // bypass disappears cleanly when Gemini is removed (Phase 3).
     const ses = session.defaultSession;
-    
-    // Allow HTTPS requests to Google APIs
-    ses.webRequest.onBeforeSendHeaders((details, callback) => {
-      if (details.url.includes('generativelanguage.googleapis.com')) {
-        details.requestHeaders['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.156 Safari/537.36';
-      }
-      callback({ requestHeaders: details.requestHeaders });
-    });
-    
-    // Handle certificate errors for Google APIs
-    ses.setCertificateVerifyProc((request, callback) => {
-      if (request.hostname === 'generativelanguage.googleapis.com') {
-        callback(0); // Trust Google's certificates
-      } else {
-        callback(-2); // Use default verification
-      }
-    });
-    
-    logger.debug('Network configuration applied for Gemini API');
+    const provider = require("./src/services/providers").getSelected();
+    if (provider && typeof provider.configureNetworkSession === "function") {
+      provider.configureNetworkSession(ses);
+    }
+
+    logger.debug('Network configuration applied for selected provider');
   }
 
   setupPermissions() {
