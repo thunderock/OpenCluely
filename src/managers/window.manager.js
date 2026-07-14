@@ -1,5 +1,4 @@
 const { BrowserWindow, screen, desktopCapturer, shell } = require('electron');
-const path = require('path');
 const logger = require('../core/logger').createServiceLogger('WINDOW');
 const config = require('../core/config');
 
@@ -244,7 +243,7 @@ class WindowManager {
     this.windows.set('llmResponse', window);
     
     // Add console message listener to see renderer logs in main process
-    window.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    window.webContents.on('console-message', (event, level, message, _line, _sourceId) => {
       if (message.includes('LLM-RESPONSE')) {
         logger.info(`[RENDERER] ${message}`);
       }
@@ -698,8 +697,8 @@ class WindowManager {
 
   positionWindow(window, type) {
     const display = this.currentDisplay || screen.getPrimaryDisplay();
-    const { x: displayX, y: displayY, width: screenWidth, height: screenHeight } = display.workArea || display.workAreaSize;
-    
+    const { x: displayX, y: displayY, width: screenWidth } = display.workArea || display.workAreaSize;
+
     if (this.bindWindows && (type === 'main' || type === 'llmResponse')) {
       // Position bound windows together
       this.positionBoundWindows();
@@ -736,10 +735,10 @@ class WindowManager {
     if (!mainWindow || !llmWindow) return;
     
     const display = this.currentDisplay || screen.getPrimaryDisplay();
-    const { x: displayX, y: displayY, width: screenWidth, height: screenHeight } = display.workArea;
-    
+    const { x: displayX, y: displayY, width: screenWidth } = display.workArea;
+
     const [mainWidth, mainHeight] = mainWindow.getSize();
-    const [llmWidth, llmHeight] = llmWindow.getSize();
+    const [llmWidth] = llmWindow.getSize();
     
     // Always position at the top of the screen with small margin
     const topMargin = 20;
@@ -791,7 +790,7 @@ class WindowManager {
     
     // Get current positions and sizes
     const [mainX, mainY] = mainWindow.getPosition();
-    const [llmX, llmY] = llmWindow.getPosition();
+    const [llmX] = llmWindow.getPosition();
     const [mainWidth, mainHeight] = mainWindow.getSize();
     const [llmWidth, llmHeight] = llmWindow.getSize();
     
@@ -1010,8 +1009,8 @@ class WindowManager {
 
   handleScreenSharingStarted() {
     logger.info('Screen sharing mode enabled - hiding windows');
-    
-    this.windows.forEach((window, type) => {
+
+    this.windows.forEach((window, _type) => {
       if (!window.isDestroyed()) {
         window.hide();
         window.setPosition(-10000, -10000);
@@ -1106,8 +1105,8 @@ class WindowManager {
 
   setInteractive(interactive) {
     this.isInteractive = interactive;
-    
-    this.windows.forEach((window, type) => {
+
+    this.windows.forEach((window, _type) => {
       if (!window.isDestroyed()) {
         if (interactive) {
           // Interactive mode: allow mouse events for all windows
@@ -1446,8 +1445,8 @@ class WindowManager {
 
   centerWindow(window) {
     const display = this.currentDisplay || screen.getPrimaryDisplay();
-    const { x: displayX, y: displayY, width: screenWidth, height: screenHeight } = display.workArea || display.workAreaSize;
-    const [windowWidth, windowHeight] = window.getSize();
+    const { x: displayX, y: displayY, width: screenWidth } = display.workArea || display.workAreaSize;
+    const [windowWidth] = window.getSize();
     
     // Center horizontally but position at top
     const topMargin = 20;
@@ -1609,7 +1608,7 @@ class WindowManager {
   moveWindowsToActiveScreen() {
     if (!this.currentDisplay || this.isScreenBeingShared) return;
 
-    const { x: displayX, y: displayY, width: displayWidth, height: displayHeight } = this.currentDisplay.workArea;
+    const { x: displayX, y: displayY, width: displayWidth } = this.currentDisplay.workArea;
     
     // Handle bound windows specially
     if (this.bindWindows) {
@@ -1631,7 +1630,7 @@ class WindowManager {
           return;
         }
         
-        const [windowWidth, windowHeight] = window.getSize();
+        const [windowWidth] = window.getSize();
         
         let newX, newY;
         
@@ -1812,7 +1811,7 @@ class WindowManager {
   }
 
   broadcastSkillChange(skill) {
-    this.windows.forEach((window, type) => {
+    this.windows.forEach((window, _type) => {
       if (!window.isDestroyed()) {
         window.webContents.send('skill-changed', { skill });
       }

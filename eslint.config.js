@@ -2,14 +2,16 @@ const globals = require('globals');
 
 // Lean, error-only ruleset shared by every layer. Only real correctness
 // rules — no stylistic gate (per-layer indentation/quote style is preserved).
-// caughtErrorsIgnorePattern keeps the repo's `catch (_) {}` idiom lint-clean.
+// caughtErrors:'none' — unused `catch` bindings are never flagged (the repo
+// leans heavily on `catch (e) { log(...) }` / `catch (_) {}` idioms).
+// A leading `_` still exempts intentionally-unused args and vars.
 const leanRules = {
   'no-undef': 'error',
   'no-unused-vars': ['error', {
     args: 'after-used',
+    caughtErrors: 'none',
     argsIgnorePattern: '^_',
     varsIgnorePattern: '^_',
-    caughtErrorsIgnorePattern: '^_',
   }],
 };
 
@@ -69,6 +71,7 @@ module.exports = [
         renderMathInElement: 'readonly',
         Prism: 'readonly',
         mainWindowUI: 'writable',
+        require: 'readonly', // chat-window.js feature-detects require for dual Node/browser module loading
       },
     },
     rules: leanRules,

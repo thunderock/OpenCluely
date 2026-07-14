@@ -126,9 +126,7 @@ class ServiceSupervisor extends EventEmitter {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (this._startupSettled) return false;
-      // eslint-disable-next-line no-await-in-loop
       if (await this._probe()) return true;
-      // eslint-disable-next-line no-await-in-loop
       await sleep(this.def.healthPollMs || 50);
     }
     return false;

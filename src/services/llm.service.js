@@ -121,7 +121,7 @@ class LLMService {
    * @param {string|null} programmingLanguage - optional language context for skills that need it
    * @returns {Promise<{response: string, metadata: object}>}
    */
-  async processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null) {
+  async processImageWithSkill(imageBuffer, mimeType, activeSkill, _sessionMemory = [], programmingLanguage = null) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -1298,7 +1298,7 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
     return connectivity;
   }
 
-  async testNetworkConnection({ host, port, name }) {
+  async testNetworkConnection({ host, port }) {
     return new Promise((resolve, reject) => {
       const net = require('net');
       const socket = new net.Socket();
@@ -1532,7 +1532,6 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
   }
 
   async executeAlternativeRequest(geminiRequest) {
-    const https = require('https');
     const apiKey = config.getApiKey('GEMINI');
     const primaryModel = config.get('llm.gemini.model');
     const fallbackModels = config.get('llm.gemini.fallbackModels') || [];

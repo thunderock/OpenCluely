@@ -1,4 +1,3 @@
-/* eslint-disable no-undef */
 /**
  * Onboarding wizard controller.
  *
@@ -37,7 +36,6 @@
   const backBtn = $('#backBtn');
   const nextBtn = $('#nextBtn');
   const skipBtn = $('#skipBtn');
-  const nav = $('#wizard .nav'); // the centered nav container
 
   // ── State ─────────────────────────────────────────────────────────
   const state = {
@@ -100,7 +98,7 @@
     else nextBtn.innerHTML = 'Continue <i class="fas fa-arrow-right"></i>';
   }
 
-  function navigate(direction) {
+  function _navigate(direction) {
     const order = computeScreenOrder();
     const idx = order.indexOf(currentScreenName());
     const next = direction === 'next' ? idx + 1 : idx - 1;
@@ -367,7 +365,6 @@
 
   // ── Wire up: Model Download screen ───────────────────────────────
   const modelDownloadLog = $('#modelDownloadLog');
-  const modelDownloadChoices = $('#modelDownloadChoices');
 
   function appendModelLog(line) {
     modelDownloadLog.textContent += (modelDownloadLog.textContent ? '\n' : '') + line;

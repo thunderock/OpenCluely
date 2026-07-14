@@ -801,7 +801,7 @@ class ApplicationController {
 
     ipcMain.handle("close-window", (event) => {
       const webContents = event.sender;
-      const window = windowManager.windows.forEach((win, type) => {
+      windowManager.windows.forEach((win, _type) => {
         if (win.webContents === webContents) {
           win.hide();
           return true;
@@ -1441,7 +1441,7 @@ class ApplicationController {
       }
 
       // Also handle other visible windows
-      windowManager.windows.forEach((window, type) => {
+      windowManager.windows.forEach((window, _type) => {
         if (window.isVisible()) {
           windowManager.showOnCurrentDesktop(window);
         }
@@ -1740,7 +1740,7 @@ class ApplicationController {
         }, 500);
       } else {
         // Windows/Linux - update window icons
-        windowManager.windows.forEach((window, type) => {
+        windowManager.windows.forEach((window, _type) => {
           if (window && !window.isDestroyed()) {
             window.setIcon(fullIconPath);
           }
@@ -1782,11 +1782,9 @@ class ApplicationController {
         app.setName(appName);
 
         // Force update the bundle name for macOS stealth
-        const { execSync } = require("child_process");
         try {
           // Update the app's Info.plist CFBundleName in memory
           if (process.mainModule && process.mainModule.filename) {
-            const appPath = process.mainModule.filename;
             // Force set the bundle name directly
             process.env.CFBundleName = appName.trim();
           }
@@ -1811,7 +1809,7 @@ class ApplicationController {
 
       // Update all window titles to match the new app name
       const windows = windowManager.windows;
-      windows.forEach((window, type) => {
+      windows.forEach((window, _type) => {
         if (window && !window.isDestroyed()) {
           // Use stealth name for all windows
           const stealthTitle = appName.trim();

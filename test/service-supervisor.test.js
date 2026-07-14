@@ -29,9 +29,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(predicate, ms, intervalMs = 20) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
-    // eslint-disable-next-line no-await-in-loop
     if (await predicate()) return true;
-    // eslint-disable-next-line no-await-in-loop
     await sleep(intervalMs);
   }
   return false;
