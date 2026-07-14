@@ -218,6 +218,188 @@ class LocalProvider extends LLMProvider {
       return text;
     }
   }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // main.js call-site surface. The facade re-exports the selected provider, so
+  // main.js calls these directly. Each returns byte-compatible
+  // { response, metadata } so every llmService.* consumer keeps working
+  // unchanged. Each builds the neutral struct via RequestBuilder, then streams
+  // through generateStream, timing processingTime and counting requests.
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Screenshot → direct multimodal answer (PROV-04, NO OCR). Streams tokens via
+   * onDelta. On any failure, degrades to the canned fallback so the overlay
+   * never goes blank.
+   */
+  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, _sessionMemory = [], programmingLanguage = null, onDelta = null) {
+    const startTime = Date.now();
+    this.requestCount++;
+    try {
+      const neutral = this.requestBuilder.buildImageRequest(imageBuffer, mimeType, activeSkill, programmingLanguage);
+      const response = await this.generateStream(neutral, { programmingLanguage }, onDelta);
+      logger.logPerformance('Local image streaming', startTime, { activeSkill, requestId: this.requestCount });
+      return {
+        response,
+        metadata: {
+          skill: activeSkill,
+          programmingLanguage,
+          processingTime: Date.now() - startTime,
+          requestId: this.requestCount,
+          usedFallback: false,
+          streamed: true,
+          isImageAnalysis: true,
+          mimeType
+        }
+      };
+    } catch (error) {
+      this.errorCount++;
+      logger.warn('Local image streaming failed, using fallback', { error: error.message, requestId: this.requestCount });
+      return this.generateIntelligentFallbackResponse('[image]', activeSkill);
+    }
+  }
+
+  /** Text prompt → streamed answer (PROV-03). Degrades to the canned fallback. */
+  async processTextWithSkillStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+    const startTime = Date.now();
+    this.requestCount++;
+    try {
+      const neutral = this.requestBuilder.buildTextRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const response = await this.generateStream(neutral, { programmingLanguage }, onDelta);
+      logger.logPerformance('Local text streaming', startTime, { activeSkill, requestId: this.requestCount });
+      return {
+        response,
+        metadata: {
+          skill: activeSkill,
+          programmingLanguage,
+          processingTime: Date.now() - startTime,
+          requestId: this.requestCount,
+          usedFallback: false,
+          streamed: true
+        }
+      };
+    } catch (error) {
+      this.errorCount++;
+      logger.warn('Local text streaming failed, using fallback', { error: error.message, requestId: this.requestCount });
+      return this.generateIntelligentFallbackResponse(text, activeSkill);
+    }
+  }
+
+  /** Transcribed speech → streamed intelligent response. Degrades to fallback. */
+  async processTranscriptionWithIntelligentResponseStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+    const startTime = Date.now();
+    this.requestCount++;
+    try {
+      const neutral = this.requestBuilder.buildTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const response = await this.generateStream(neutral, { programmingLanguage }, onDelta);
+      logger.logPerformance('Local transcription streaming', startTime, { activeSkill, requestId: this.requestCount });
+      return {
+        response,
+        metadata: {
+          skill: activeSkill,
+          programmingLanguage,
+          processingTime: Date.now() - startTime,
+          requestId: this.requestCount,
+          usedFallback: false,
+          streamed: true,
+          isTranscriptionResponse: true
+        }
+      };
+    } catch (error) {
+      this.errorCount++;
+      logger.warn('Local transcription streaming failed, using fallback', { error: error.message, requestId: this.requestCount });
+      return this.generateIntelligentFallbackResponse(text, activeSkill);
+    }
+  }
+
+  /**
+   * Canned, model-availability-oriented fallback so the overlay never goes
+   * blank when Local is down. Mirrors GeminiProvider's shape; reused by the
+   * Local-down recovery UX (03-06).
+   */
+  generateIntelligentFallbackResponse(text, activeSkill) {
+    logger.info('Generating local-model-unavailable fallback response', { activeSkill });
+
+    const textLower = (text || '').toLowerCase();
+    const questionIndicators = ['how', 'what', 'why', 'when', 'where', 'can you', 'could you', 'should i', '?'];
+    const seemsLikeQuestion = questionIndicators.some(indicator => textLower.includes(indicator));
+
+    const response = seemsLikeQuestion
+      ? "Local model unavailable right now, so I can't answer that yet — restart Ollama or re-download the model from Settings, then ask again."
+      : 'Local model unavailable right now — restart Ollama or re-download the model from Settings.';
+
+    return {
+      response,
+      metadata: {
+        skill: activeSkill,
+        processingTime: 0,
+        requestId: this.requestCount,
+        usedFallback: true,
+        isTranscriptionResponse: true
+      }
+    };
+  }
+
+  /** Runtime stats for the status IPC. */
+  getStats() {
+    return {
+      isInitialized: this.isInitialized,
+      requestCount: this.requestCount,
+      errorCount: this.errorCount,
+      successRate: this.requestCount > 0 ? ((this.requestCount - this.errorCount) / this.requestCount) * 100 : 0,
+      provider: 'local',
+      model: this.model,
+      host: this.host
+    };
+  }
+
+  /**
+   * Local has no API key (apiKey:'ollama' is required-but-ignored). No-op that
+   * re-reads host/model and reconstructs the client, so the shared IPC path
+   * does not break during the Gemini→Local transition window.
+   */
+  updateApiKey(_newApiKey) {
+    logger.info('Local provider has no API key; re-reading host/model from config');
+    this.initializeClient();
+  }
+
+  /**
+   * LOCAL health probe (repurposed from Gemini's TCP connectivity check).
+   * Probes the Ollama server (/api/version) and the model list (/v1/models),
+   * returning a { timestamp, tests: [...] } shape compatible with the
+   * diagnostics consumer. Never throws.
+   */
+  async checkNetworkConnectivity() {
+    const probes = [
+      { name: 'Ollama server (/api/version)', url: `${this.host}/api/version` },
+      { name: 'Model list (/v1/models)', url: `${this.host}/v1/models` }
+    ];
+
+    const tests = [];
+    for (const probe of probes) {
+      try {
+        const res = await this._fetchWithTimeout(probe.url, 3000);
+        tests.push({ name: probe.name, url: probe.url, success: !!res.ok, error: res.ok ? null : `HTTP ${res.status}` });
+      } catch (error) {
+        tests.push({ name: probe.name, url: probe.url, success: false, error: error.message });
+      }
+    }
+
+    const connectivity = { timestamp: new Date().toISOString(), tests };
+    logger.info('Local connectivity check completed', connectivity);
+    return connectivity;
+  }
+
+  /** GET with an abort timeout; backs the local health probe. */
+  async _fetchWithTimeout(url, timeoutMs = 3000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 }
 
 module.exports = { LocalProvider };
