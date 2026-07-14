@@ -1,6 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const { app, BrowserWindow, globalShortcut, session, ipcMain } = require("electron");
+const { upsertEnvContent } = require("./src/core/env-file");
 
 // ── Resolve a stable .env location ──
 // In packaged builds process.cwd() is unstable and frequently read-only
@@ -25,19 +26,6 @@ function resolveEnvPath() {
 }
 const ENV_PATH = resolveEnvPath();
 require("dotenv").config({ path: ENV_PATH });
-
-// Format a value for a single .env line. Newlines are collapsed to spaces and
-// backslashes are kept verbatim (doubling them corrupts Windows paths on the
-// next load). Values containing whitespace, a double-quote, or a leading '#'
-// are wrapped in single quotes so dotenv parses them as one token — essential
-// for Whisper commands like:  "C:\Users\Jane Doe\...\python.exe" -m whisper
-function formatEnvValue(raw) {
-  const v = String(raw).replace(/[\r\n]+/g, " ").trim();
-  if (!/[\s"#]/.test(v)) return v;
-  if (!v.includes("'")) return `'${v}'`;
-  // Rare: value already contains a single quote — fall back to double quotes.
-  return `"${v.replace(/"/g, '\\"')}"`;
-}
 
 // ── Linux GPU process crash workaround ──
 // On many Linux setups (Wayland, X11 without GPU drivers, Docker, headless,
@@ -1675,29 +1663,7 @@ class ApplicationController {
       existing = "";
     }
 
-    const existingLines = existing.length > 0 ? existing.split(/\r?\n/) : [];
-    const updated = new Set();
-    const outLines = [];
-
-    for (const line of existingLines) {
-      // Match "KEY=" (with optional whitespace) but skip comment lines
-      const m = line.match(/^\s*([A-Z0-9_]+)\s*=/);
-      if (m && Object.prototype.hasOwnProperty.call(updates, m[1])) {
-        const key = m[1];
-        outLines.push(`${key}=${formatEnvValue(updates[key])}`);
-        updated.add(key);
-      } else {
-        outLines.push(line);
-      }
-    }
-
-    // Append any keys that weren't already present
-    for (const key of keys) {
-      if (!updated.has(key)) {
-        outLines.push(`${key}=${formatEnvValue(updates[key])}`);
-        updated.add(key);
-      }
-    }
+    const content = upsertEnvContent(existing, updates);
 
     // Update process.env so the running app picks up the new values
     // immediately (and so the settings UI reads the same source of truth).
@@ -1705,10 +1671,9 @@ class ApplicationController {
       process.env[key] = String(updates[key]);
     }
 
-    const newContent = outLines.join("\n");
     try {
       const tmpPath = envPath + ".tmp";
-      fs.writeFileSync(tmpPath, newContent, "utf8");
+      fs.writeFileSync(tmpPath, content, "utf8");
       fs.renameSync(tmpPath, envPath);
     } catch (e) {
       logger.error("Failed to persist .env updates", {
@@ -1718,8 +1683,8 @@ class ApplicationController {
       return [];
     }
 
-    logger.info("Persisted .env updates", { keys: Array.from(updated) });
-    return Array.from(updated);
+    logger.info("Persisted .env updates", { keys });
+    return keys;
   }
 
   updateAppIcon(iconKey) {

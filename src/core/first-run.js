@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { parseEnv } = require('./env-file');
 
 /**
  * First-run detection and onboarding helper.
@@ -92,34 +93,7 @@ class FirstRunManager {
 
   _readEnv() {
     try {
-      const content = fs.readFileSync(this.envPath, 'utf8');
-      const result = {};
-      for (const rawLine of content.split(/\r?\n/)) {
-        const line = rawLine.trim();
-        if (!line || line.startsWith('#')) continue;
-        const eq = line.indexOf('=');
-        if (eq === -1) continue;
-        const key = line.slice(0, eq).trim();
-        let value = line.slice(eq + 1).trim();
-
-        // If the value is quoted, find the matching closing quote and
-        // take everything between. Anything after the closing quote is
-        // treated as trailing whitespace/comment.
-        if (value.startsWith('"') || value.startsWith("'")) {
-          const quote = value[0];
-          const closeIdx = value.indexOf(quote, 1);
-          if (closeIdx !== -1) {
-            value = value.slice(1, closeIdx);
-          }
-        } else {
-          // Unquoted: strip trailing inline comment (a " #" sequence).
-          const hashIdx = value.indexOf(' #');
-          if (hashIdx !== -1) value = value.slice(0, hashIdx).trim();
-        }
-
-        result[key] = value;
-      }
-      return result;
+      return parseEnv(fs.readFileSync(this.envPath, 'utf8'));
     } catch (_) {
       return {};
     }
