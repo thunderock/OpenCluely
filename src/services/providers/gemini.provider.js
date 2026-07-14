@@ -225,6 +225,39 @@ class GeminiProvider extends LLMProvider {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Gemini-specific network hardening (SC3) — NOT part of the LLMProvider
+  // interface. Relocated verbatim from main.js global startup so it applies
+  // ONLY when Gemini is the selected provider and vanishes cleanly at removal.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Apply the Gemini cert-verify bypass + User-Agent override to an Electron
+   * session. The caller gates this on Gemini being the selected provider; a
+   * future provider simply won't define this method, so the bypass disappears
+   * with no dead global startup code (SC3).
+   */
+  configureNetworkSession(ses) {
+    if (!ses) return;
+
+    // Allow HTTPS requests to Google APIs (desktop-Chrome User-Agent spoof).
+    ses.webRequest.onBeforeSendHeaders((details, callback) => {
+      if (details.url.includes('generativelanguage.googleapis.com')) {
+        details.requestHeaders['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.156 Safari/537.36';
+      }
+      callback({ requestHeaders: details.requestHeaders });
+    });
+
+    // Handle certificate errors for Google APIs.
+    ses.setCertificateVerifyProc((request, callback) => {
+      if (request.hostname === 'generativelanguage.googleapis.com') {
+        callback(0); // Trust Google's certificates
+      } else {
+        callback(-2); // Use default verification
+      }
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Relocated verbatim from llm.service.js (only the build* call is swapped for
   // serialize(requestBuilder.build*Request(...))).
   // ─────────────────────────────────────────────────────────────────────────
