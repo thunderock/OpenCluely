@@ -2,12 +2,15 @@ const fs = require('fs');
 const path = require('path');
 const skillNormalizer = require('./src/core/skill-normalizer');
 
+// Skills shipped as loadable .md prompts: General (default) + Coding.
+const SHIPPED_SKILLS = ['general', 'programming'];
+
 class PromptLoader {
   constructor() {
     this.prompts = new Map();
     this.promptsLoaded = false;
     this.skillPromptSent = new Set();
-    // Focus only on DSA
+    // Skills that take a programming-language injection (see skill-normalizer).
     this.skillsRequiringProgrammingLanguage = [...skillNormalizer.SKILLS_REQUIRING_PROGRAMMING_LANGUAGE];
   }
 
@@ -29,7 +32,7 @@ class PromptLoader {
       for (const file of files) {
         if (file.endsWith('.md')) {
           const skillName = path.basename(file, '.md');
-          if (skillName !== 'dsa') continue; // only keep DSA
+          if (!SHIPPED_SKILLS.includes(skillName)) continue; // ship only General + Coding
           const filePath = path.join(promptsDir, file);
           const promptContent = fs.readFileSync(filePath, 'utf8');
           
@@ -305,7 +308,7 @@ class PromptLoader {
     if (!this.promptsLoaded) {
       this.loadPrompts();
     }
-    return ['dsa'];
+    return [...SHIPPED_SKILLS];
   }
 
   /**

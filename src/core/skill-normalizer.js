@@ -4,8 +4,8 @@
 // here so they can be unit-tested without the prompts directory.
 
 // Single source of truth for the skills that take a programming-language
-// injection (currently just DSA).
-const SKILLS_REQUIRING_PROGRAMMING_LANGUAGE = ['dsa'];
+// injection (the Coding skill; the legacy dsa aliases fold into it).
+const SKILLS_REQUIRING_PROGRAMMING_LANGUAGE = ['programming'];
 
 // Normalize a raw skill name to its canonical file-name form.
 function normalizeSkillName(skillName) {
@@ -16,12 +16,11 @@ function normalizeSkillName(skillName) {
 
   // Map common variations to standard names
   const skillMap = {
-    'dsa': 'dsa',
-    'data-structures': 'dsa',
-    'algorithms': 'dsa',
-    'data-structures-algorithms': 'dsa',
+    'dsa': 'programming',
+    'data-structures': 'programming',
+    'algorithms': 'programming',
+    'data-structures-algorithms': 'programming',
     'behavioral': 'behavioral',
-    'behavioral-interview': 'behavioral',
     'behavior': 'behavioral',
     'sales': 'sales',
     'selling': 'sales',
@@ -65,7 +64,7 @@ function injectProgrammingLanguage(promptContent, programmingLanguage, skillName
   let languageInjection = '';
 
   switch (skillName) {
-    case 'dsa':
+    case 'programming':
       languageInjection = `\n\n## IMPLEMENTATION LANGUAGE: ${languageUpper}
 STRICT REQUIREMENTS:
 - Respond ONLY in ${languageTitle}. Do not include any snippets or alternatives in other languages.
