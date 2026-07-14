@@ -4,13 +4,16 @@
 <!-- Keep this SHORT — only what's specific to THIS repo. Entries: `YYYY-MM-DD — what — why`. No secrets. -->
 
 ## What this is
-Electron app being transformed from a cloud-Gemini on-demand overlay into a local-first, always-on multimodal copilot (GSD-planned, 8 phases; see `.planning/`).
+Electron app being transformed from a cloud-Gemini on-demand overlay into a local-first, always-on multimodal copilot (GSD-planned, 9 phases; see `.planning/`).
 
 ## Local facts
 - 2026-07-14 — Install deps with `npm ci --ignore-scripts` — plain `npm ci` (what `make setup`/`setup-dev` run) triggers the electron-builder postinstall that downloads the ~100 MB Electron binary; slow/destructive in sandboxed contexts.
 - 2026-07-14 — Run tests with `node --test test/*.test.js` (glob) — the bare-directory form `node --test test/` fails to resolve on newer Node. Makefile `run_tests` and CI use the glob.
 - 2026-07-14 — Lint gate is `npx eslint .` (ESLint 9 flat config `eslint.config.js`), error-only, must exit 0. `make lint` wraps it.
 - 2026-07-14 — Pure, testable logic lives in `src/core/*` (env-file, skill-normalizer, vad-segmenter, service-supervisor); the god-file singletons (`src/services/speech.service.js` etc.) delegate to them. Tests must import `src/core/*`, never the singletons.
+- 2026-07-14 — LLM path (post-Phase-2): `main.js` → `src/services/llm.service.js` (17-line facade = `require('./providers').getSelected()` — NOT destructured, that loses `this`) → `GeminiProvider` (`src/services/providers/gemini.provider.js`) → `RequestBuilder` (`src/core/request-builder.js`, pure/DI, emits input-neutral struct) → `serialize()` → transport. New providers register in `src/services/providers/index.js` (hardcoded `gemini` default until Phase 3 adds selection).
+- 2026-07-14 — Provider-seam parity net: `test/gemini-request-parity.test.js` asserts byte-identical outgoing Gemini requests vs `test/fixtures/gemini-requests/*.json`; regenerate with `node scripts/capture-gemini-goldens.js`. This is the regression guard for any change to the LLM request path.
+- 2026-07-14 — Gemini cert-verify bypass + UA override live in `GeminiProvider.configureNetworkSession()` (gated on selection), invoked from `main.js setupNetworkConfiguration()`. Azure/STT cert/UA remain in `speech.service.js` + `main-window.js` (Phase 3/4 removes them).
 
 ## Gotchas
 - 2026-07-14 — gsd-tools CLI can't parse this repo's NARRATIVE ROADMAP/STATE format — `phase complete` / `state advance-plan` / `update-progress` silently no-op AND `phase complete` falsely reports `is_last_phase: true`. Mark phase/plan/requirement completion MANUALLY in ROADMAP.md + REQUIREMENTS.md; verify next-phase via ROADMAP, not the CLI's `is_last_phase`.
