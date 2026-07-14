@@ -39,6 +39,23 @@ class ConfigManager {
       },
 
       llm: {
+        // Provider selection (PROV-06). Default Local; overridable via env so
+        // the transition window can flip back to Gemini without a code change.
+        // The registry (index.js) is NOT wired to this key yet — 03-03 does
+        // that — so the app keeps running on the proven Gemini path until then.
+        provider: process.env.LLM_PROVIDER || 'local',
+
+        // Per-provider block for the local engine. `host` is the client base
+        // URL (scheme included); LocalProvider appends '/v1', LocalModelManager
+        // derives the daemon's OLLAMA_HOST ('host:port', no scheme) from it.
+        local: {
+          host: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+          model: process.env.LOCAL_MODEL || 'qwen3-vl:8b',
+          keepAlive: -1,
+          curatedModels: ['qwen3-vl:8b', 'qwen3-vl:30b', 'gemma3:4b', 'gemma3:12b']
+        },
+
+        // KEEP verbatim during the Phase-3 transition — removed at PROV-07.
         gemini: {
           model: 'gemini-3.1-flash-lite',
           fallbackModels: ['gemini-2.5-flash-lite', 'gemini-3.5-flash'],
