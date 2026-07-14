@@ -12,7 +12,7 @@ This milestone turns OpenCluely from a cloud-Gemini, on-demand overlay into a lo
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation — Supervisor, Tests, Lint, Makefile** - Generic service supervisor + a test/lint/Makefile safety net for safe refactoring
+- [x] **Phase 1: Foundation — Supervisor, Tests, Lint, Makefile** - Generic service supervisor + a test/lint/Makefile safety net for safe refactoring
 - [ ] **Phase 2: Provider Seam — Wrap Gemini Verbatim** - `LLMProvider` abstraction + `RequestBuilder`; app still works on Gemini, call-sites unchanged
 - [ ] **Phase 3: Local Engine + Cloud Removal** - Local multimodal model as the primary/default path; Gemini + Azure removed last, after Local is proven
 - [ ] **Phase 4: Continuous Hearing — Resident STT + Ambient Listening** - Resident whisper.cpp continuously transcribes mic + macOS system audio from launch to quit
@@ -33,11 +33,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. The `ServiceSupervisor` can spawn a local process, health-check it (port/HTTP), restart it with backoff after the process is killed, and terminate it on app quit (SIGTERM→SIGKILL) — demonstrated by a test.
   4. The supervisor supports adopt-if-present / own-if-started, so it never kills a process it did not start.
 **Plans**: 5 plans (3 waves)
-- [ ] 01-01-PLAN.md — Extract .env + skill/prompt normalization into pure modules + node:test suites (Wave 1)
-- [ ] 01-02-PLAN.md — Extract VAD segmentation state machine, delegate SpeechService + node:test suite (Wave 1)
-- [ ] 01-03-PLAN.md — Generic ServiceSupervisor + fixture + demo suite proving SC3/SC4 (Wave 1)
-- [ ] 01-04-PLAN.md — ESLint 9 flat config + globals devDeps + clean fix pass (Wave 2)
-- [ ] 01-05-PLAN.md — Makefile (4 targets) + CI lint/test gate on PR + push:main (Wave 3)
+- [x] 01-01-PLAN.md — Extract .env + skill/prompt normalization into pure modules + node:test suites (Wave 1)
+- [x] 01-02-PLAN.md — Extract VAD segmentation state machine, delegate SpeechService + node:test suite (Wave 1)
+- [x] 01-03-PLAN.md — Generic ServiceSupervisor + fixture + demo suite proving SC3/SC4 (Wave 1)
+- [x] 01-04-PLAN.md — ESLint 9 flat config + globals devDeps + clean fix pass (Wave 2)
+- [x] 01-05-PLAN.md — Makefile (4 targets) + CI lint/test gate on PR + push:main (Wave 3)
 
 ### Phase 2: Provider Seam — Wrap Gemini Verbatim
 **Goal**: An `LLMProvider` abstraction exists with the existing Gemini code wrapped verbatim behind it, and the app still answers exactly as before — this is the sequencing keystone (never removal-first).
@@ -127,7 +127,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation — Supervisor, Tests, Lint, Makefile | 0/5 | Planned | - |
+| 1. Foundation — Supervisor, Tests, Lint, Makefile | 5/5 | Complete | 2026-07-14 |
 | 2. Provider Seam — Wrap Gemini Verbatim | 0/TBD | Not started | - |
 | 3. Local Engine + Cloud Removal | 0/TBD | Not started | - |
 | 4. Continuous Hearing — Resident STT + Ambient Listening | 0/TBD | Not started | - |

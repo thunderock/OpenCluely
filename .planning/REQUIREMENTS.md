@@ -9,10 +9,10 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 ### Foundation (FND)
 
-- [ ] **FND-01**: An automated test suite exists and runs via `make run_tests`, covering the pure-logic pieces (VAD segmentation, `.env` parse, skill/prompt normalization)
-- [ ] **FND-02**: A lint/format setup runs via `make lint`, with a CI lint gate on pushes/PRs
-- [ ] **FND-03**: A `Makefile` provides `setup`, `setup-dev`, `run_tests`, and `lint` targets
-- [ ] **FND-04**: A generic `ServiceSupervisor` can spawn a local process, health-check it (port/HTTP), restart it on crash with backoff, and stop it on app quit
+- [x] **FND-01**: An automated test suite exists and runs via `make run_tests`, covering the pure-logic pieces (VAD segmentation, `.env` parse, skill/prompt normalization)
+- [x] **FND-02**: A lint/format setup runs via `make lint`, with a CI lint gate on pushes/PRs
+- [x] **FND-03**: A `Makefile` provides `setup`, `setup-dev`, `run_tests`, and `lint` targets
+- [x] **FND-04**: A generic `ServiceSupervisor` can spawn a local process, health-check it (port/HTTP), restart it on crash with backoff, and stop it on app quit
 
 ### LLM Providers (PROV)
 
@@ -110,10 +110,10 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FND-01 | Phase 1 | Pending |
-| FND-02 | Phase 1 | Pending |
-| FND-03 | Phase 1 | Pending |
-| FND-04 | Phase 1 | Pending |
+| FND-01 | Phase 1 | Complete |
+| FND-02 | Phase 1 | Complete |
+| FND-03 | Phase 1 | Complete |
+| FND-04 | Phase 1 | Complete |
 | PROV-01 | Phase 2 | Pending |
 | PROV-02 | Phase 2 | Pending |
 | PROV-03 | Phase 3 | Pending |
