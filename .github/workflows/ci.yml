@@ -1,0 +1,35 @@
+name: CI
+
+# Lint + test gate. Separate from the tag-only release.yml (which builds/publishes).
+# Gates every pull request and every push to main across ubuntu + macOS on Node 20.
+on:
+  pull_request:              # gates lint + tests on ALL PRs (FND-02 SC2)
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    name: Lint & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'        # resolves to latest 20.x (>=20.19)
+          cache: 'npm'
+
+      # Skip the Electron binary download + electron-builder app-deps rebuild:
+      # the lint/test job needs neither. Faster and removes a flaky network dep (Pitfall 5).
+      - run: npm ci --ignore-scripts
+
+      # Lint gate — a lint error fails the job.
+      - run: npx eslint .
+
+      # Pure-logic + supervisor suites via Node's built-in runner. Single-* glob is
+      # portable on Node 20 and runs only *.test.js, so test/fixtures/** is not run.
+      - run: node --test test/*.test.js
