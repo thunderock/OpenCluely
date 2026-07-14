@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 2 of 8 (Provider Seam — Wrap Gemini Verbatim) — Phase 1 COMPLETE
-Plan: 1 of 3 complete (02-01 done; 02-02 next)
-Status: Executing Phase 2 — 02-01 (abstraction skeleton) complete; 02-02 (Gemini provider serialize) next
-Last activity: 2026-07-14 — Plan 02-01 executed: LLMProvider contract + pure DI RequestBuilder (neutral request struct) landed; Gemini prompt/history assembly carved out byte-identical (432-assertion parity), 18 new node:test cases, whole-repo eslint + 56/56 tests green. God-files unchanged (purely additive).
+Plan: 2 of 3 complete (02-01, 02-02 done; 02-03 next)
+Status: Executing Phase 2 — 02-02 (Gemini provider + serialize + byte-identical parity) complete; 02-03 (facade flip + cert/UA relocation) next
+Last activity: 2026-07-14 — Plan 02-02 executed: GeminiProvider relocated verbatim behind LLMProvider (generate/generateStream/isAvailable/testConnection) + single serialize() neutral→wire mapper + hardcoded-gemini registry; process* now call serialize(requestBuilder.build*Request(...)). Byte-identical golden parity pinned (3 fixtures captured from live llm.service, exact-string match across generate AND generateStream), 7 new node:test cases, whole-repo eslint + 63/63 tests green. God-files unchanged (purely additive).
 
-Progress: [█░░░░░░░░░] Milestone v1.0 — 1 of 8 phases complete (Phase 2: 1 of 3 plans)
+Progress: [█░░░░░░░░░] Milestone v1.0 — 1 of 8 phases complete (Phase 2: 2 of 3 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: 9 min
-- Total execution time: 9 min
+- Total plans completed: 2
+- Average duration: 12 min
+- Total execution time: 24 min
 
 **By Phase:**
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 02    | 1     | 9 min | 9 min    |
+| Phase | Plans | Total  | Avg/Plan |
+|-------|-------|--------|----------|
+| 02    | 2     | 24 min | 12 min   |
 
 **Recent Trend:**
-- Last 5 plans: 02-01 (9 min, 3 tasks, 3 files)
-- Trend: — (first data point)
+- Last 5 plans: 02-01 (9 min, 3 tasks, 3 files), 02-02 (15 min, 2 tasks, 7 files)
+- Trend: ↑ slightly (verbatim relocation of a 1654-line god-file + golden parity capture)
 
 *Updated after each plan completion*
 
@@ -46,6 +46,8 @@ Load-bearing sequencing decisions driving this roadmap:
 - Phase 1: One generic `ServiceSupervisor`, configured twice — must precede the model server (P3) and STT server (P4).
 - Phase 5: DOMPurify (SEC-01) + macOS TCC recovery (SEC-02) ship in the SAME phase as continuous capture (CONT-04) / md-context (CONT-05) — the features that create the threat surface.
 - Local runtime = Ollama ≥ 0.19 (`qwen3-vl:8b`), adopt-if-present / own-if-started; cache at `~/.ollama/models` (not `~/.cache`).
+
+- Phase 2: Gemini provider + byte-identical parity landed (plan 02-02, SC2/SC3/SC4). `GeminiProvider extends LLMProvider` (`src/services/providers/gemini.provider.js`) relocates the Gemini transport/client/retry/error/fallback/testConnection logic VERBATIM out of the 1654-line `llm.service.js` (only require paths + `extends`/`super()` changed). `serialize(neutral)` is the SINGLE neutral→Gemini wire mapper — key insertion order `contents` → `generationConfig` → `systemInstruction` reproduces today's exact object so JSON.stringify is byte-identical; no Gemini shape leaks into RequestBuilder (SC4). The 6 process* methods stay verbatim except the request-build call, now `serialize(requestBuilder.build*Request(...))`; `generate`/`generateStream` are thin siblings (serialize + execute*/executeStreamingRequest, returning answer TEXT, honoring `options.programmingLanguage`); `isAvailable` returns `isInitialized`. The provider imports NEITHER sessionManager NOR promptLoader (RequestBuilder owns them; the deleted build*/format*/getIntelligentTranscriptionPrompt methods were their only users). Registry (`src/services/providers/index.js`) is `{ providers, selected:'gemini', register, get, getSelected }` exported as the object — hardcoded default, no user switch this phase (Phase 3 adds it; SC3 anchor for cert/UA gating in 02-03). Parity pinned by 3 goldens captured from the LIVE llm.service (transport monkeypatched, network-free) via `scripts/capture-gemini-goldens.js` (exports shared FIXED inputs + fakes, guarded by `require.main` so the test imports them side-effect-free); `test/gemini-request-parity.test.js` asserts exact string equality for text/image/transcription AND that generate + generateStream build the identical golden. God-files untouched; whole-repo eslint + 63/63 node:test green.
 
 - Phase 2: Abstraction skeleton landed FIRST (plan 02-01, PROV-02/SC2/SC4 groundwork). `LLMProvider` base contract (`src/services/providers/llm-provider.js`) names exactly generate/generateStream/isAvailable/testConnection, each throwing by default (subclass-must-override). `RequestBuilder` (`src/core/request-builder.js`) is a pure DI module (`constructor({ sessionManager, promptLoader })` defaulting to the real singletons — the Phase-1 service-supervisor DI shape) that emits ONE input-neutral struct `{ kind, skill, systemPrompt, userText, images[], history[], mdContext }` for text/image/transcription — NO Gemini wire keys (contents/parts/systemInstruction/generationConfig), those stay for the provider's serialize step (02-02). Prompt helpers (formatUserMessage/formatImageInstruction/getIntelligentTranscriptionPrompt) relocated byte-identical (verified by a line-range source-slice → runtime diff harness, 432 assertions across 4 skills x 9 langs); history limits preserved exactly (text 15; transcription 10-then-last-8) with system/empty filtering + `model→model / *→user` mapping. No `programmingLanguage` field on the struct (it drives assembly via the helpers; response-side enforcement is the provider's job). `buildImageRequest` takes a Buffer (`.toString('base64')`) or a base64 string. God-files (llm.service.js/main.js/session.manager.js) untouched — purely additive; whole-repo eslint + 56/56 node:test green.
 
@@ -76,5 +78,5 @@ Research flags to resolve during planning (not blockers to starting):
 ## Session Continuity
 
 Last session: 2026-07-14
-Stopped at: Completed 02-01-PLAN.md — LLMProvider contract + pure DI RequestBuilder (neutral request struct) landed on branch gsd/phase-02-provider-seam-wrap-gemini-verbatim (3 atomic commits: f190809 contract, a5600f6 RequestBuilder, 6fd6d6e tests). Gemini prompt/history assembly carved out byte-identical; whole-repo eslint clean + 56/56 node:test green; god-files unchanged. NOTE: Phase 1 branch + all Phase 2 commits remain unpushed pending the user's push/merge.
-Resume file: .planning/phases/02-provider-seam-wrap-gemini-verbatim/02-02-PLAN.md — Gemini provider (neutral→wire serialize + cert-bypass/UA relocation) next.
+Stopped at: Completed 02-02-PLAN.md — GeminiProvider (verbatim relocation) + serialize + hardcoded-gemini registry + byte-identical golden parity landed on branch gsd/phase-02-provider-seam-wrap-gemini-verbatim (2 atomic commits: 6564b6f provider+serialize+registry, 7877968 fixtures+parity test). serialize() reproduces today's outgoing Gemini request byte-for-byte for text/image/transcription across generate AND generateStream; whole-repo eslint clean + 63/63 node:test green; god-files (llm.service.js/main.js/session.manager.js) unchanged (additive). NOTE: Phase 1 branch + all Phase 2 commits remain unpushed pending the user's push/merge.
+Resume file: .planning/phases/02-provider-seam-wrap-gemini-verbatim/02-03-PLAN.md — facade flip (thin llm.service delegating to the provider via the registry, identical exports, call-sites unchanged) + Gemini cert-verify-bypass/UA-override relocation into the provider (gated on gemini selected) + live streaming-transport smoke.
