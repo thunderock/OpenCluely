@@ -106,50 +106,52 @@ Explicitly excluded. Documented to prevent scope creep.
 
 ## Traceability
 
-Populated during roadmap creation — each v1 requirement maps to exactly one phase.
+Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for phase detail.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FND-01 | TBD | Pending |
-| FND-02 | TBD | Pending |
-| FND-03 | TBD | Pending |
-| FND-04 | TBD | Pending |
-| PROV-01 | TBD | Pending |
-| PROV-02 | TBD | Pending |
-| PROV-03 | TBD | Pending |
-| PROV-04 | TBD | Pending |
-| PROV-05 | TBD | Pending |
-| PROV-06 | TBD | Pending |
-| PROV-07 | TBD | Pending |
-| PROV-08 | TBD | Pending |
-| PROV-09 | TBD | Pending |
-| PROV-10 | TBD | Pending |
-| PROV-11 | TBD | Pending |
-| STT-01 | TBD | Pending |
-| STT-02 | TBD | Pending |
-| STT-03 | TBD | Pending |
-| STT-04 | TBD | Pending |
-| CONT-01 | TBD | Pending |
-| CONT-02 | TBD | Pending |
-| CONT-03 | TBD | Pending |
-| CONT-04 | TBD | Pending |
-| CONT-05 | TBD | Pending |
-| CONT-06 | TBD | Pending |
-| CONT-07 | TBD | Pending |
-| SEC-01 | TBD | Pending |
-| SEC-02 | TBD | Pending |
-| SEC-03 | TBD | Pending |
-| GEN-01 | TBD | Pending |
-| REL-01 | TBD | Pending |
-| REL-02 | TBD | Pending |
-| REL-03 | TBD | Pending |
-| REL-04 | TBD | Pending |
+| FND-01 | Phase 1 | Pending |
+| FND-02 | Phase 1 | Pending |
+| FND-03 | Phase 1 | Pending |
+| FND-04 | Phase 1 | Pending |
+| PROV-01 | Phase 2 | Pending |
+| PROV-02 | Phase 2 | Pending |
+| PROV-03 | Phase 3 | Pending |
+| PROV-04 | Phase 3 | Pending |
+| PROV-05 | Phase 3 | Pending |
+| PROV-06 | Phase 3 | Pending |
+| PROV-07 | Phase 3 | Pending |
+| PROV-08 | Phase 7 | Pending |
+| PROV-09 | Phase 7 | Pending |
+| PROV-10 | Phase 7 | Pending |
+| PROV-11 | Phase 7 | Pending |
+| STT-01 | Phase 4 | Pending |
+| STT-02 | Phase 4 | Pending |
+| STT-03 | Phase 4 | Pending |
+| STT-04 | Phase 4 | Pending |
+| CONT-01 | Phase 6 | Pending |
+| CONT-02 | Phase 6 | Pending |
+| CONT-03 | Phase 6 | Pending |
+| CONT-04 | Phase 5 | Pending |
+| CONT-05 | Phase 5 | Pending |
+| CONT-06 | Phase 6 | Pending |
+| CONT-07 | Phase 6 | Pending |
+| SEC-01 | Phase 5 | Pending |
+| SEC-02 | Phase 5 | Pending |
+| SEC-03 | Phase 5 | Pending |
+| GEN-01 | Phase 3 | Pending |
+| REL-01 | Phase 8 | Pending |
+| REL-02 | Phase 8 | Pending |
+| REL-03 | Phase 8 | Pending |
+| REL-04 | Phase 8 | Pending |
 
 **Coverage:**
 - v1 requirements: 34 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 34 ⚠️ (resolved by roadmap)
+- Mapped to phases: 34 ✓
+- Unmapped: 0 ✓
+
+**Per-phase counts:** Phase 1: 4 · Phase 2: 2 · Phase 3: 6 · Phase 4: 4 · Phase 5: 5 · Phase 6: 5 · Phase 7: 4 · Phase 8: 4
 
 ---
 *Requirements defined: 2026-07-13*
-*Last updated: 2026-07-13 after initial definition*
+*Last updated: 2026-07-13 after roadmap creation (traceability mapped)*
