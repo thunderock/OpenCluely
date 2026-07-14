@@ -230,8 +230,13 @@ class ServiceSupervisor extends EventEmitter {
     this._intentionalStop = true;
     if (this._backoffTimer) { clearTimeout(this._backoffTimer); this._backoffTimer = null; }
 
-    // NEVER kill an adopted/foreign process — locked hard requirement (SC4).
-    if (!this.owned || !this.child) {
+    // NEVER kill an adopted/foreign process (SC4). Also nothing to reap if we
+    // never spawned one, or if our owned child has ALREADY exited (e.g. it
+    // crashed and we're in 'failed') — otherwise we'd wait the full SIGTERM
+    // grace for an 'exit' event that can never fire again, making shutdown
+    // needlessly slow after a crash.
+    const alreadyExited = this.child && (this.child.exitCode !== null || this.child.signalCode !== null);
+    if (!this.owned || !this.child || alreadyExited) {
       this._setState('stopped');
       return;
     }
