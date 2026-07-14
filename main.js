@@ -1604,6 +1604,13 @@ class ApplicationController {
       whisperSegmentMs: process.env.WHISPER_SEGMENT_MS || "4000",
       geminiKey: process.env.GEMINI_API_KEY || "",
 
+      // AI model engine (PROV-06). Read from config so the UI reflects the live
+      // provider/model resolution (config derives these from LLM_PROVIDER /
+      // LOCAL_MODEL in .env). geminiKey above stays until PROV-07 removal.
+      provider: config.get("llm.provider"),
+      model: config.get("llm.local.model"),
+      curatedModels: config.get("llm.local.curatedModels"),
+
       azureConfigured: !!process.env.AZURE_SPEECH_KEY && !!process.env.AZURE_SPEECH_REGION,
       speechAvailable: this.speechAvailable
     };
@@ -1666,6 +1673,17 @@ class ApplicationController {
         envUpdates.GEMINI_API_KEY = settings.geminiKey;
       }
 
+      // AI model engine (PROV-06). Persist to .env so the selection survives a
+      // restart and is applied on next launch: the provider facade resolves the
+      // selected provider at module load, so this is restart-to-apply (no live
+      // hot-swap), matching the app's other .env-backed settings.
+      if (settings.provider === "local" || settings.provider === "gemini") {
+        envUpdates.LLM_PROVIDER = settings.provider;
+      }
+      if (settings.model !== undefined) {
+        envUpdates.LOCAL_MODEL = settings.model;
+      }
+
       // Capture the previous whisper command BEFORE persisting — persistEnvUpdates
       // mutates process.env in place, so comparing afterwards would always read
       // equal and skip the speech re-init below (the exact stale-mic-after-install
@@ -1673,6 +1691,14 @@ class ApplicationController {
       const prevWhisperCommand = process.env.WHISPER_COMMAND || '';
 
       const persistedKeys = this.persistEnvUpdates(envUpdates);
+
+      if (settings.provider !== undefined || settings.model !== undefined) {
+        // Meta only — no live provider hot-swap; the switch applies on next launch.
+        logger.info("LLM provider/model updated", {
+          provider: settings.provider,
+          model: settings.model,
+        });
+      }
 
       // If the Gemini key was just saved, reinitialize the LLM service
       // so the new client picks up the key. Without this, the test-
