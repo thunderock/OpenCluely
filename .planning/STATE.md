@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 2 of 8 (Provider Seam — Wrap Gemini Verbatim) — Phase 1 COMPLETE
-Plan: 0 of TBD (Phase 2 not yet planned; context gathered, moving to plan-phase)
-Status: Phase 2 context gathered (02-CONTEXT.md) — planning next (/gsd:plan-phase 2)
-Last activity: 2026-07-13 — Phase 2 context gathered: 4 areas (selection/config, verbatim strictness, request-shape horizon, parity verification); all decisions minimal-risk/verbatim. 02-CONTEXT.md written + committed; proceeding to plan-phase 2.
+Plan: 1 of 3 complete (02-01 done; 02-02 next)
+Status: Executing Phase 2 — 02-01 (abstraction skeleton) complete; 02-02 (Gemini provider serialize) next
+Last activity: 2026-07-14 — Plan 02-01 executed: LLMProvider contract + pure DI RequestBuilder (neutral request struct) landed; Gemini prompt/history assembly carved out byte-identical (432-assertion parity), 18 new node:test cases, whole-repo eslint + 56/56 tests green. God-files unchanged (purely additive).
 
-Progress: [█░░░░░░░░░] Milestone v1.0 — 1 of 8 phases complete
+Progress: [█░░░░░░░░░] Milestone v1.0 — 1 of 8 phases complete (Phase 2: 1 of 3 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: —
-- Total execution time: —
+- Total plans completed: 1
+- Average duration: 9 min
+- Total execution time: 9 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 02    | 1     | 9 min | 9 min    |
 
 **Recent Trend:**
-- Last 5 plans: —
-- Trend: —
+- Last 5 plans: 02-01 (9 min, 3 tasks, 3 files)
+- Trend: — (first data point)
 
 *Updated after each plan completion*
 
@@ -46,6 +46,8 @@ Load-bearing sequencing decisions driving this roadmap:
 - Phase 1: One generic `ServiceSupervisor`, configured twice — must precede the model server (P3) and STT server (P4).
 - Phase 5: DOMPurify (SEC-01) + macOS TCC recovery (SEC-02) ship in the SAME phase as continuous capture (CONT-04) / md-context (CONT-05) — the features that create the threat surface.
 - Local runtime = Ollama ≥ 0.19 (`qwen3-vl:8b`), adopt-if-present / own-if-started; cache at `~/.ollama/models` (not `~/.cache`).
+
+- Phase 2: Abstraction skeleton landed FIRST (plan 02-01, PROV-02/SC2/SC4 groundwork). `LLMProvider` base contract (`src/services/providers/llm-provider.js`) names exactly generate/generateStream/isAvailable/testConnection, each throwing by default (subclass-must-override). `RequestBuilder` (`src/core/request-builder.js`) is a pure DI module (`constructor({ sessionManager, promptLoader })` defaulting to the real singletons — the Phase-1 service-supervisor DI shape) that emits ONE input-neutral struct `{ kind, skill, systemPrompt, userText, images[], history[], mdContext }` for text/image/transcription — NO Gemini wire keys (contents/parts/systemInstruction/generationConfig), those stay for the provider's serialize step (02-02). Prompt helpers (formatUserMessage/formatImageInstruction/getIntelligentTranscriptionPrompt) relocated byte-identical (verified by a line-range source-slice → runtime diff harness, 432 assertions across 4 skills x 9 langs); history limits preserved exactly (text 15; transcription 10-then-last-8) with system/empty filtering + `model→model / *→user` mapping. No `programmingLanguage` field on the struct (it drives assembly via the helpers; response-side enforcement is the provider's job). `buildImageRequest` takes a Buffer (`.toString('base64')`) or a base64 string. God-files (llm.service.js/main.js/session.manager.js) untouched — purely additive; whole-repo eslint + 56/56 node:test green.
 
 - Phase 1: VAD decision logic extracted to a pure `src/core/vad-segmenter.js` (action-return delegation: accumulate|flush|discard|noop); `SpeechService` keeps buffer storage/Whisper flush and delegates the VAD-enabled path — established the pure-logic extraction + node:test pattern (FND-01, plan 01-02).
 
@@ -73,6 +75,6 @@ Research flags to resolve during planning (not blockers to starting):
 
 ## Session Continuity
 
-Last session: 2026-07-13
-Stopped at: Phase 2 context gathered — 02-CONTEXT.md written + committed (4 areas: selection/config, verbatim strictness, request-shape horizon, parity verification; all verbatim/minimal-risk). User confirmed the wrap-Gemini-verbatim sequencing (abstraction first, remove cloud last) and chose to proceed to plan-phase 2. Phase 1 remains COMPLETE. NOTE: Phase 1 branch (gsd/phase-01-...) + the Phase 2 CONTEXT/MEMORY commits are unpushed pending the user's push/merge.
-Resume file: .planning/phases/02-provider-seam-wrap-gemini-verbatim/02-CONTEXT.md — planning in progress (/gsd:plan-phase 2).
+Last session: 2026-07-14
+Stopped at: Completed 02-01-PLAN.md — LLMProvider contract + pure DI RequestBuilder (neutral request struct) landed on branch gsd/phase-02-provider-seam-wrap-gemini-verbatim (3 atomic commits: f190809 contract, a5600f6 RequestBuilder, 6fd6d6e tests). Gemini prompt/history assembly carved out byte-identical; whole-repo eslint clean + 56/56 node:test green; god-files unchanged. NOTE: Phase 1 branch + all Phase 2 commits remain unpushed pending the user's push/merge.
+Resume file: .planning/phases/02-provider-seam-wrap-gemini-verbatim/02-02-PLAN.md — Gemini provider (neutral→wire serialize + cert-bypass/UA relocation) next.
