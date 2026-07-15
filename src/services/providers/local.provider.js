@@ -18,6 +18,7 @@ const OpenAI = require('openai');
 const config = require('../../core/config');
 const { LLMProvider } = require('./llm-provider');
 const { RequestBuilder } = require('../../core/request-builder');
+const { ensureNativeGlobalURL, nodeFetch } = require('../../core/local-transport');
 const logger = require('../../core/logger').createServiceLogger('LOCAL');
 
 class LocalProvider extends LLMProvider {
@@ -49,9 +50,27 @@ class LocalProvider extends LLMProvider {
     this.model = local.model || this.model;
     this.keepAlive = local.keepAlive != null ? local.keepAlive : this.keepAlive;
 
+    // The Azure STT browser-DOM polyfill (speech.service.js, required at main.js
+    // startup) poisons global.URL with a fake that has no `searchParams` — which
+    // the openai SDK's internal buildURL relies on (Object.fromEntries(
+    // url.searchParams)). Restore the native global URL before constructing the
+    // client (idempotent no-op when unpolluted; see local-transport.js).
+    ensureNativeGlobalURL();
+
     try {
-      // apiKey is required-but-ignored by Ollama's /v1 endpoint (RESEARCH Flag 5).
-      this.client = new OpenAI({ baseURL: `${this.host}/v1`, apiKey: 'ollama' });
+      // - dangerouslyAllowBrowser: the same polyfill sets window+document+navigator,
+      //   which trips the SDK's browser guard in the Electron MAIN process; we are
+      //   not actually in a browser, so the guard is a false positive here.
+      // - fetch: nodeFetch forces a Node-http transport so requests reach the
+      //   loopback daemon; the ambient Electron main fetch (Chromium-net) false-
+      //   negatives loopback.
+      // - apiKey is required-but-ignored by Ollama's /v1 endpoint (RESEARCH Flag 5).
+      this.client = new OpenAI({
+        baseURL: `${this.host}/v1`,
+        apiKey: 'ollama',
+        dangerouslyAllowBrowser: true,
+        fetch: nodeFetch,
+      });
       this.isInitialized = true;
       logger.info('Local LLM client initialized', { host: this.host, model: this.model });
     } catch (error) {
@@ -390,12 +409,14 @@ class LocalProvider extends LLMProvider {
     return connectivity;
   }
 
-  /** GET with an abort timeout; backs the local health probe. */
+  /** GET with an abort timeout; backs the local health probe. Uses nodeFetch
+   * (Node http) rather than the ambient fetch so the loopback probe is not
+   * false-negatived by the Electron main Chromium-net stack. */
   async _fetchWithTimeout(url, timeoutMs = 3000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, { signal: controller.signal });
+      return await nodeFetch(url, { signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }

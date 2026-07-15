@@ -14,6 +14,7 @@
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
+const { URL: NodeURL } = require('node:url');
 
 const { LocalProvider } = require('../src/services/providers/local.provider');
 const config = require('../src/core/config');
@@ -132,6 +133,64 @@ describe('LocalProvider graceful degradation (Ollama down)', () => {
     assert.ok(r.response.length > 0);
     assert.equal(r.metadata.usedFallback, true);
     assert.equal(r.metadata.skill, 'general');
+  });
+});
+
+describe('LocalProvider robustness vs the Azure browser-DOM polyfill (ollama-not-detected)', () => {
+  // speech.service.js (required at main.js startup) sets global.window +
+  // global.document + global.navigator — the openai SDK's isRunningInBrowser
+  // triad, so `new OpenAI()` throws "browser-like environment" unless
+  // dangerouslyAllowBrowser is set — AND replaces global.URL with a fake that
+  // has no `searchParams`, which the SDK's internal buildURL relies on. A
+  // faithful, hermetic proxy for that shim:
+  class FakeBrowserURL {
+    constructor(href) {
+      this.href = href;
+      this.protocol = 'https:';
+      this.host = 'localhost';
+      this.hostname = 'localhost';
+      this.port = '';
+      this.pathname = '/';
+      this.search = '';
+    }
+    toString() { return this.href; }
+  }
+
+  test('client initializes under the polyfilled globals and the poisoned global URL is repaired', () => {
+    // Use defineProperty for the whole triad: on Node 21+ `navigator` is a
+    // getter-only global (plain assignment throws), whereas Electron 29's Node
+    // 20.9 has no global navigator (the real polyfill just assigns it). This
+    // override + descriptor restore is robust either way.
+    const orig = {
+      window: Object.getOwnPropertyDescriptor(global, 'window'),
+      document: Object.getOwnPropertyDescriptor(global, 'document'),
+      navigator: Object.getOwnPropertyDescriptor(global, 'navigator'),
+      URL: Object.getOwnPropertyDescriptor(globalThis, 'URL'),
+    };
+    const set = (key, value) => Object.defineProperty(global, key, { value, writable: true, configurable: true, enumerable: true });
+    const restore = (obj, key, desc) => { if (desc) Object.defineProperty(obj, key, desc); else delete obj[key]; };
+
+    // Install the openai isRunningInBrowser triad + poisoned URL before construct.
+    set('window', { navigator: { userAgent: 'Node.js' }, document: { createElement: () => ({}) } });
+    set('document', global.window.document);
+    set('navigator', global.window.navigator);
+    Object.defineProperty(globalThis, 'URL', { value: FakeBrowserURL, writable: true, configurable: true });
+
+    try {
+      const p = new LocalProvider();
+      // (a) the openai client constructed despite the browser-like environment
+      assert.equal(p.isAvailable(), true, 'client must initialize under polyfilled globals (dangerouslyAllowBrowser)');
+      // (b) the provider repaired the poisoned global URL to the native one
+      assert.equal(globalThis.URL, NodeURL, 'provider must restore the native global URL');
+      const u = new globalThis.URL('http://127.0.0.1:11434/v1');
+      assert.equal(u.hostname, '127.0.0.1', 'repaired URL parses loopback host correctly');
+      assert.equal(u.port, '11434', 'repaired URL parses loopback port correctly');
+    } finally {
+      restore(global, 'window', orig.window);
+      restore(global, 'document', orig.document);
+      restore(global, 'navigator', orig.navigator);
+      restore(globalThis, 'URL', orig.URL);
+    }
   });
 });
 

@@ -9,8 +9,8 @@ trigger: |
   running engine. "why do I still see [this] when ollama is already installed".
   DATA_END
 created: 2026-07-14
-updated: 2026-07-14
-tags: [phase-03, local-engine, onboarding, macos, electron, fetch, transport]
+updated: 2026-07-14T23:40:00Z
+tags: [phase-03, local-engine, onboarding, macos, electron, fetch, transport, polyfill, url-pollution]
 ---
 
 # Debug: Ollama not detected in onboarding (Step 3)
@@ -26,7 +26,12 @@ tags: [phase-03, local-engine, onboarding, macos, electron, fetch, transport]
 
 ## Current Focus
 
-- root_cause (CONFIRMED): `getStatus().serverUp` is computed by `_probeVersion()` (local-model.manager.js:146,216-228), which probes the daemon with the **ambient global `fetch`**. In the Electron **main process**, that global `fetch` is Chromium-`net`-backed and FAILS for the loopback Ollama daemon — whereas Node's `http` transport reaches the same daemon fine. So a running, HTTP-reachable daemon is reported `serverUp:false`, which blocks Continue. This is NOT a binary-PATH problem and NOT "serverUp probes the binary" — those parts of the original hypothesis are eliminated below.
+- REOPENED 2026-07-14T23:xx — prior fix (commit 2628f8a) was NECESSARY BUT INSUFFICIENT; real app STILL reported serverUp:false after a clean restart. DEEPER root cause found + PROVEN below (Azure browser-DOM polyfill pollutes `global.URL` process-wide).
+- deeper_root_cause (CONFIRMED, network-free): `main.js` top-level `require("./src/services/speech.service")` runs the Azure Speech SDK browser-DOM shim, which REPLACES `global.URL` (+ window/document/navigator/…) with a FAKE URL class that parses ANY input to `{ hostname:'localhost', port:'', protocol:'https:' }` and has NO `searchParams` (speech.service.js:293-308, 354). Every `new URL()` in the process is then poisoned. This breaks THREE local-engine consumers: (1) `_probeVersion` — prior fix used `new URL(this.host)` on the poisoned global → probeHttp targets localhost:443, not 127.0.0.1:11434 → serverUp:false; (2) the openai SDK's internal `buildURL` does `Object.fromEntries(url.searchParams)` → THROWS on the fake URL (this is exactly the "browser-like environment" pre-throw AND, once dangerouslyAllowBrowser is set, a searchParams TypeError); (3) the ollama client's `formatHost` mangles host → `https://localhost:443…`. PLUS the openai constructor throws "It looks like you're running in a browser-like environment" because the polyfill sets window+document+navigator (openai isRunningInBrowser triad) — observed in ~/.OpenCluely/logs/error-2026-07-14.log on EVERY run (100% of LOCAL errors), so the client never even initialized (isInitialized:false → cannot answer).
+- fix (IMPLEMENTED, see Resolution): new `src/core/local-transport.js` (native URL + `ensureNativeGlobalURL()` global-URL repair + `nodeFetch` Node-http WHATWG transport). Manager: `new URL` from node:url in `_probeVersion`, repair global URL + pass `nodeFetch` to the ollama client, guard `getStatus()`. Provider: repair global URL + `dangerouslyAllowBrowser:true` + `nodeFetch` transport. Polyfill left intact (Phase 4 / STT-05 owns removal).
+- next_action: DONE — RED tests confirmed failing pre-fix, GREEN post-fix; both whole-repo gates green; committed atomically. Real-full-app relaunch verification (serverUp:true in application-*.log) PENDING human confirmation.
+
+- prior_root_cause (still true, part of the chain): `getStatus().serverUp` is computed by `_probeVersion()` (local-model.manager.js:146,216-228), which probes the daemon with the **ambient global `fetch`**. In the Electron **main process**, that global `fetch` is Chromium-`net`-backed and FAILS for the loopback Ollama daemon — whereas Node's `http` transport reaches the same daemon fine. So a running, HTTP-reachable daemon is reported `serverUp:false`, which blocks Continue. This is NOT a binary-PATH problem and NOT "serverUp probes the binary" — those parts of the original hypothesis are eliminated below.
 - proof: application-2026-07-14.log 17:56:15 "Local model manager started" logs `state:'adopted', adopted:true` (the supervisor's Node-`http` `probeHttp` to 127.0.0.1:11434 SUCCEEDED → it adopted the running daemon) **and** `serverUp:false` in the SAME object / same instant / same process. Two probes to the same host at the same moment: Node `http` succeeds, global `fetch` fails.
 - test: RED regression test added — test/local-model-manager.test.js test #8 ("getStatus().serverUp stays true when the daemon is HTTP-reachable but global fetch is broken"). Network-free: real loopback `http` daemon + `globalThis.fetch` stubbed to throw (faithful proxy for the Electron-main condition). Confirmed **RED** against current code: `false !== true` at test:287.
 - next_action: DONE — [GREEN] applied: `_probeVersion()` now probes `/api/version` via `ServiceSupervisor.probeHttp` (Node `http`), dropping the global-`fetch` dependency. Regression test #8 flipped RED→GREEN; both whole-repo gates green (`node --test test/*.test.js` 84/84; `npx eslint .` clean). Fix+test+debug-file committed atomically (explicit pathspec). See ## Resolution.
@@ -56,6 +61,40 @@ tags: [phase-03, local-engine, onboarding, macos, electron, fetch, transport]
   - RED→GREEN: `node --test test/local-model-manager.test.js` — test #8 "getStatus().serverUp stays true when the daemon is HTTP-reachable but global fetch is broken" (real loopback `http` daemon + `globalThis.fetch` stubbed to throw) now PASSES; was failing `false !== true` at test:287 before the fix. All 9 tests in the file pass.
   - Whole-repo gate 1: `node --test test/*.test.js` → 84 tests, 84 pass, 0 fail.
   - Whole-repo gate 2: `npx eslint .` → exit 0, clean (`URL` is a Node global; `ServiceSupervisor` already imported; `catch (_)` exempt).
-- files_changed:
+- files_changed (prior pass, commit 2628f8a — necessary but INSUFFICIENT):
   - src/core/local-model.manager.js — `_probeVersion()` now uses `ServiceSupervisor.probeHttp` (Node `http`) instead of the global `fetch`.
   - test/local-model-manager.test.js — added regression test #8 (RED→GREEN) proving `serverUp` must not depend on the global fetch.
+
+---
+
+## Resolution (REOPEN 2 — deeper root cause: Azure browser-DOM polyfill poisons global.URL)
+
+- why_prior_fix_insufficient: commit 2628f8a switched `_probeVersion` to Node `http` but still parsed `this.host` with the **global** `URL`. The Azure STT polyfill (speech.service.js, required at main.js top-level) had already REPLACED `global.URL` with a fake that parses every input to `{hostname:'localhost', port:'', protocol:'https:'}` (speech.service.js:293-308, assigned at :354). So probeHttp targeted `localhost:443`, not `127.0.0.1:11434` → serverUp:false persisted after a clean restart. The SAME poison ALSO threw inside the openai SDK's `buildURL` (`Object.fromEntries(url.searchParams)`) and mangled the ollama client's `formatHost` (`https://localhost:443…`). Independently, the polyfill's window+document+navigator triad tripped the openai SDK browser guard → `new OpenAI()` threw "browser-like environment" on EVERY run (100% of LOCAL errors in ~/.OpenCluely/logs/error-2026-07-14.log) → isInitialized:false → the LLM could not answer at all (the real 03-07 gate).
+
+- root_cause (deeper, PROVEN network-free): a single process-wide defect — the Azure polyfill clobbering `global.URL` — breaks all three local-engine consumers (`_probeVersion`, openai SDK `buildURL`, ollama `formatHost`), and its window/document/navigator triad additionally trips the openai browser guard.
+
+- fix:
+  - NEW src/core/local-transport.js — shared robustness layer: (a) `ensureNativeGlobalURL()` restores the native node:url `URL` to `globalThis.URL` (idempotent; the fake's constant-garbage output cannot be relied on by Azure, so a full WHATWG URL is strictly safe); (b) `nodeFetch()` — a WHATWG-fetch over Node `http`/`https` that parses hosts with the NATIVE URL and returns a native `Response` (web-stream body: supports openai `.json()`/streamed `.body.getReader()` and the ollama client), immune to the Electron-main Chromium-net fetch that false-negatives loopback; (c) `normalizeHeaders()` (the SDK passes a WHATWG `Headers` instance — handed raw to node:http it would silently drop Content-Type/Authorization).
+  - src/core/local-model.manager.js — import native `URL` from `node:url` (so `_probeVersion` is immune regardless of load order); call `ensureNativeGlobalURL()` at the top of the constructor before building the ollama client; pass `fetch: nodeFetch` to the ollama client (list/pull/generate/warmup robust); GUARD `getStatus()` so a downstream model-probe throw can never flip `serverUp` false.
+  - src/services/providers/local.provider.js — call `ensureNativeGlobalURL()` before constructing the client; add `dangerouslyAllowBrowser: true` (false-positive browser guard in Electron main) AND `fetch: nodeFetch` (Node transport); route the diagnostics `_fetchWithTimeout` through `nodeFetch` too.
+  - Polyfill LEFT INTACT (removal is Phase 4 / STT-05); the local engine is made robust against it.
+
+- tests (TDD RED→GREEN, network-free / loopback only):
+  - test/local-model-manager.test.js #9 "getStatus().serverUp stays true when the Azure polyfill has poisoned global.URL" — poisons `globalThis.URL` with a faithful FakeBrowserURL AFTER construction, asserts serverUp:true against a real loopback daemon. RED pre-fix: `AssertionError: a reachable daemon must be serverUp even under a poisoned global URL` (false). GREEN post-fix.
+  - test/local-model-manager.test.js #10 "getStatus() keeps serverUp true when a downstream model probe throws" — RED pre-fix: getStatus rejected (`Error: model probe blew up`); GREEN post-fix (serverUp:true, modelPresent:false).
+  - test/local-provider.test.js "client initializes under the polyfilled globals and the poisoned global URL is repaired" — sets the openai isRunningInBrowser triad + poisoned URL, asserts `isAvailable()===true` and `globalThis.URL===require('node:url').URL`. RED pre-fix: `AssertionError: client must initialize under polyfilled globals (dangerouslyAllowBrowser)` — `false !== true` (test:182). GREEN post-fix.
+  - NEW test/local-transport.test.js — 6 tests locking in `ensureNativeGlobalURL()` + `nodeFetch()` (json, streamed getReader, Headers normalization, native-URL-under-poison) + `normalizeHeaders()`.
+
+- verification (gates):
+  - Gate 1: `node --test test/*.test.js` → 93 tests, 93 pass, 0 fail (was 84; +9 new).
+  - Gate 2: `npx eslint .` → exit 0, clean.
+
+- verification (REAL FULL APP): PENDING human confirmation. Requires a FULL quit + relaunch (dev `npm start`) with the Ollama daemon running, then `serverUp:true` in ~/.OpenCluely/logs/application-*.log AND no "browser-like environment" / URL errors in error-*.log, plus onboarding Step 3 unblocking Continue and the local model answering. NOT self-verified here (agent cannot drive the Electron GUI); the session manager owns the relaunch/log check. The separate onActivate crash at main.js:1534 was left untouched (out of scope).
+
+- files_changed (REOPEN 2):
+  - src/core/local-transport.js (NEW)
+  - src/core/local-model.manager.js
+  - src/services/providers/local.provider.js
+  - test/local-transport.test.js (NEW)
+  - test/local-model-manager.test.js
+  - test/local-provider.test.js

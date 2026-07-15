@@ -17,13 +17,22 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { URL } = require('node:url'); // native URL, immune to the Azure polyfill poisoning global.URL
 const ServiceSupervisor = require('./service-supervisor');
+const { ensureNativeGlobalURL, nodeFetch } = require('./local-transport');
 
 const MIN_RAM_GB = 16; // qwen3-vl:8b recommended unified-memory floor
 const MIN_DISK_GB = 7; // ~6 GB model weights + headroom
 
 class LocalModelManager {
   constructor({ supervisor, ollama, spawn, config, logger } = {}) {
+    // The Azure STT browser-DOM polyfill (speech.service.js, required at main.js
+    // startup) clobbers global.URL with a fake that mis-parses every host to
+    // localhost — which breaks the ollama client's formatHost. Restore the
+    // native global URL before constructing any client. (Idempotent no-op when
+    // unpolluted; see local-transport.js.)
+    ensureNativeGlobalURL();
+
     const cfg = config || require('./config');
     const local = cfg.get('llm.local') || {};
     this.host = local.host || 'http://127.0.0.1:11434';
@@ -33,7 +42,10 @@ class LocalModelManager {
 
     this.logger = logger || require('./logger').createServiceLogger('MODEL');
     // DI seam: tests pass a fake ollama client; production builds the real one.
-    this.ollama = ollama || new (require('ollama').Ollama)({ host: this.host });
+    // Hand it a Node-http fetch (nodeFetch): the Electron main-process ambient
+    // fetch is Chromium-net-backed and false-negatives the loopback daemon that
+    // Node http reaches fine, so list/pull/generate must not use it.
+    this.ollama = ollama || new (require('ollama').Ollama)({ host: this.host, fetch: nodeFetch });
 
     // Resolve the system `ollama` binary once (guide-install path when absent).
     this.ollamaBin = this._resolveOllamaBin();
@@ -147,8 +159,15 @@ class LocalModelManager {
     let modelPresent = false;
     let modelResponds = false;
     if (serverUp) {
-      modelPresent = await this._isModelPresent();
-      if (modelPresent) modelResponds = await this._modelResponds();
+      // Guard: once the server is proven reachable, a model-probe failure must
+      // NEVER flip serverUp false — the three health levels are independent, and
+      // the onboarding Continue gate keys off serverUp alone.
+      try {
+        modelPresent = await this._isModelPresent();
+        if (modelPresent) modelResponds = await this._modelResponds();
+      } catch (e) {
+        this.logger.warn('model probe failed after serverUp; keeping serverUp=true', { error: e.message });
+      }
     }
     return {
       owned: !!s.owned,
@@ -219,6 +238,9 @@ class LocalModelManager {
     // the loopback daemon that Node `http` reaches fine. Reuse the supervisor's
     // probeHttp — the same deterministic transport that already adopts the daemon —
     // so a reachable daemon is reported serverUp regardless of the ambient fetch.
+    // `URL` here is the module-scoped NATIVE node:url URL (see the top-of-file
+    // import), immune to the Azure polyfill poisoning global.URL — without that,
+    // `new URL(this.host)` would yield hostname 'localhost' and mis-target the probe.
     try {
       const u = new URL(this.host);
       const port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80);
