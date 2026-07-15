@@ -101,6 +101,33 @@ test('nodeFetch() exposes a streamed body via .body.getReader() (ollama/openai s
   );
 });
 
+test('nodeFetch() streamed body: reader.cancel() mid-stream closes cleanly (no ERR_INVALID_STATE double-close)', async () => {
+  // Regression (ollama-not-detected follow-on): the openai SDK reads a streamed
+  // completion then cancels the reader; the ensuing socket 'close' must NOT
+  // double-close the web ReadableStream controller. Readable.toWeb(res) threw an
+  // uncaught ERR_INVALID_STATE here and crashed the app mid-answer; the hand-built
+  // stream closes exactly once. A regression re-crashes as an uncaught exception,
+  // failing this run.
+  await withServer(
+    (_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n');
+      // Intentionally do not end — the client cancels mid-stream, then the socket
+      // closes; both the 'close' handler and cancel() must be no-throw.
+    },
+    async (port) => {
+      const res = await nodeFetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', body: '{}' });
+      const reader = res.body.getReader();
+      const first = await reader.read();
+      assert.ok(first.value && first.value.length > 0, 'received the first streamed SSE chunk');
+      await reader.cancel(); // mimic the openai SDK closing the stream early
+    },
+  );
+  // Let any deferred socket 'end'/'close' handlers fire; a double-close would
+  // surface as an uncaught ERR_INVALID_STATE and fail the test run.
+  await new Promise((resolve) => setTimeout(resolve, 40));
+});
+
 test('nodeFetch() normalizes a WHATWG Headers instance so node:http sends them', async () => {
   await withServer(
     (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ct: req.headers['content-type'], auth: req.headers['authorization'] })); },

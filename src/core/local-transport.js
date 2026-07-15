@@ -29,7 +29,7 @@
 
 const http = require('node:http');
 const https = require('node:https');
-const { Readable } = require('node:stream');
+const { ReadableStream } = require('node:stream/web'); // native web stream, captured independent of any polyfill
 const { URL } = require('node:url'); // native, captured independent of the (poisoned) global URL
 
 // Idempotent: restore the native global URL when the polyfill has clobbered it.
@@ -94,7 +94,34 @@ function nodeFetch(input, init = {}) {
         headers: normalizeHeaders(init.headers),
       },
       (res) => {
-        resolve(new Response(Readable.toWeb(res), {
+        // Build the web ReadableStream by hand rather than Readable.toWeb(res):
+        // toWeb's adapter double-closes the controller when an IncomingMessage
+        // fires BOTH 'end' and 'close' (or 'close' after the consumer cancels)
+        // during a streamed response — throwing an uncaught ERR_INVALID_STATE
+        // ("Controller is already closed") that crashed the app mid-answer. A
+        // single guarded close/error is robust to end+close and reader.cancel().
+        let settled = false;
+        const body = new ReadableStream({
+          start(controller) {
+            const finish = () => {
+              if (settled) return;
+              settled = true;
+              try { controller.close(); } catch (_) { /* already closed */ }
+            };
+            res.on('data', (chunk) => {
+              try { controller.enqueue(new Uint8Array(chunk)); } catch (_) { /* consumer cancelled */ }
+            });
+            res.on('end', finish);
+            res.on('close', finish);
+            res.on('error', (err) => {
+              if (settled) return;
+              settled = true;
+              try { controller.error(err); } catch (_) { /* already settled */ }
+            });
+          },
+          cancel() { res.destroy(); },
+        });
+        resolve(new Response(body, {
           status: res.statusCode,
           statusText: res.statusMessage,
           headers: res.headers,
