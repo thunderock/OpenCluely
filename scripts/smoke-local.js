@@ -49,13 +49,18 @@ const path = require('path');
 const zlib = require('zlib');
 const { spawnSync } = require('child_process');
 const { Ollama } = require('ollama');
+const OpenAI = require('openai');
 const config = require('../src/core/config');
 
 // ── Tunables (representative of the bounded-notes budget Phase 5 will send) ──
 const NOTES_CHARS = 12000; // ~context.maxChars md-notes budget (ARCHITECTURE.md)
 const IMAGE_W = 1280;      // long edge ~1280px = the downscaled frame Phase 5 sends
 const IMAGE_H = 800;       // landscape, screenshot-shaped
-const NUM_PREDICT = 64;    // bound decode so the smoke is fast; enough for a rate
+// Bound decode so the smoke stays fast, but leave headroom for qwen3-vl's thinking:
+// on a heavy bounded-notes+image prompt it emits hundreds of <think> tokens before
+// content even with /no_think, so a small cap (e.g. 64) starves the answer. 256 is
+// enough to reach content in the usual case; override via SMOKE_NUM_PREDICT.
+const NUM_PREDICT = Number(process.env.SMOKE_NUM_PREDICT) || 256;
 const NUM_CTX = 8192;      // hold system+notes+image (~5k tok) uncut; realistic KV
 const TTFT_GATE_MS = 4000; // lenient Phase-3 wall-clock gate (~3–4 s, warm)
 
@@ -152,12 +157,39 @@ function buildFillerNotes(targetChars) {
 
 // runId at the very top forces full prefix divergence between the two measured
 // requests, so neither benefits from the other's KV-cache (independent numbers).
+function buildSystem(systemPrompt, runId) {
+  // Mirror LocalProvider's default (GEN-01, local.provider.js): qwen3-vl is a
+  // reasoning model that otherwise emits a verbose <think> chain. The /no_think
+  // soft-switch in the system prompt is the same mechanism the app uses. NOTE: on
+  // the native /api/chat path qwen3-vl still routes output to the reasoning channel
+  // when an image is present (so message.content is empty there) — hence the answer
+  // + wall-clock TTFT are measured over /v1 below (the app's path), which is clean.
+  return `<!-- smoke-run:${runId} -->\n${systemPrompt}\n\n`
+    + `# User notes (bounded context)\n${buildFillerNotes(NOTES_CHARS)}`
+    + '\n\n/no_think';
+}
+
+// Ollama native (/api/chat) shape — used only for the authoritative
+// prompt_eval_duration (prefill) + decode-rate numbers.
 function buildMessages(systemPrompt, runId, imageBase64, question) {
-  const system = `<!-- smoke-run:${runId} -->\n${systemPrompt}\n\n`
-    + `# User notes (bounded context)\n${buildFillerNotes(NOTES_CHARS)}`;
   return [
-    { role: 'system', content: system },
+    { role: 'system', content: buildSystem(systemPrompt, runId) },
     { role: 'user', content: question, images: [imageBase64] },
+  ];
+}
+
+// OpenAI /v1 shape (image_url data URL) — the app's LocalProvider path; used for the
+// answer confirmation + user-perceived TTFT (qwen3-vl honors /no_think here).
+function buildV1Messages(systemPrompt, runId, imageBase64, question) {
+  return [
+    { role: 'system', content: buildSystem(systemPrompt, runId) },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: question },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
+      ],
+    },
   ];
 }
 
@@ -232,6 +264,8 @@ async function main() {
   }
 
   const client = new Ollama({ host });
+  // The app's LocalProvider talks OpenAI /v1; use it for the answer + TTFT check.
+  const v1 = new OpenAI({ baseURL: `${host}/v1`, apiKey: 'ollama' });
 
   if (!(await modelPresent(client, model))) {
     console.error(`\nFAIL: model "${model}" is not present on the local Ollama.`);
@@ -289,22 +323,25 @@ async function main() {
   const decodeTps = evalMs > 0 ? (evalCount / (evalMs / 1000)) : null;
   const answer1 = (res.message && res.message.content) ? res.message.content.trim() : '';
 
-  // 3) STREAMING measured request (fresh prefix): user-perceived wall-clock TTFT.
-  console.log('Measuring wall-clock to first token (streaming)…');
+  // 3) STREAMING over /v1 (the app's LocalProvider path, fresh prefix):
+  //    user-perceived wall-clock TTFT to the first CONTENT token + a real answer
+  //    sample. /v1 (not the native /api/chat above) is where qwen3-vl honors
+  //    /no_think with an image, so content is clean — this mirrors what the overlay
+  //    actually streams to the user.
+  console.log('Measuring wall-clock to first token (streaming, /v1 app path)…');
   const q2 = 'Summarize the on-screen content and my notes in one short suggestion of what to say.';
-  const msgs2 = buildMessages(systemPrompt, randomId(), bigImageB64, q2);
+  const msgs2 = buildV1Messages(systemPrompt, randomId(), bigImageB64, q2);
   const stStart = Date.now();
   let firstDeltaMs = null;
   let streamed = '';
-  const stream = await client.chat({
+  const stream = await v1.chat.completions.create({
     model,
     messages: msgs2,
     stream: true,
-    keep_alive: keepAlive,
-    options: { num_predict: NUM_PREDICT, num_ctx: NUM_CTX },
+    max_tokens: NUM_PREDICT,
   });
   for await (const part of stream) {
-    const delta = part && part.message ? (part.message.content || '') : '';
+    const delta = part.choices && part.choices[0] ? (part.choices[0].delta.content || '') : '';
     if (delta) {
       if (firstDeltaMs === null) firstDeltaMs = Date.now() - stStart;
       streamed += delta;
@@ -320,8 +357,8 @@ async function main() {
   console.log(`  wall-clock to first streamed token:          ${ms(firstDeltaMs)}`);
   console.log(`  decode rate: ${decodeTps ? decodeTps.toFixed(1) + ' tok/s' : 'n/a'} (${evalCount} tok / ${ms(evalMs)})`);
   console.log(`  non-streaming wall-clock (full ${NUM_PREDICT}-tok answer): ${ms(nsWallMs)}`);
-  const sample = (answer1 || streamed).replace(/\s+/g, ' ').slice(0, 120);
-  console.log(`  answer sample: ${sample ? '“' + sample + '…”' : '(empty)'}`);
+  const sample = (streamed || answer1).replace(/\s+/g, ' ').slice(0, 120);
+  console.log(`  answer sample (/v1 app path): ${sample ? '“' + sample + '…”' : '(empty)'}`);
   line();
 
   // Memory residency is a human eyeball check; surface `ollama ps` if we can.
@@ -338,7 +375,7 @@ async function main() {
   line();
 
   // ── Verdict (timing only; memory + the 3 overlay entry points = human gate) ──
-  const gotAnswer = !!(answer1 || (streamed && streamed.trim()));
+  const gotAnswer = !!(streamed && streamed.trim());
   const ttftPass = firstDeltaMs !== null && firstDeltaMs <= TTFT_GATE_MS;
   const pass = gotAnswer && ttftPass;
 
@@ -347,8 +384,12 @@ async function main() {
       + `(gate ≤ ${TTFT_GATE_MS} ms, warm).`);
   } else {
     console.log('NEEDS REVIEW:');
-    if (!gotAnswer) console.log('  - model returned an empty answer.');
-    if (firstDeltaMs === null) console.log('  - no streamed token observed.');
+    if (!gotAnswer) {
+      console.log(evalCount > 0
+        ? `  - no CONTENT within the ${NUM_PREDICT}-token budget: the model generated ${evalCount} tokens but they were <think> reasoning. qwen3-vl over-reasons on this heavy bounded-notes+image prompt even with /no_think — raise SMOKE_NUM_PREDICT, and treat the slow time-to-first-content as a real "fast answer" concern (consider a non-reasoning default model).`
+        : '  - model returned an empty answer.');
+    }
+    if (firstDeltaMs === null) console.log('  - no first CONTENT token observed over /v1 within the budget (reasoning likely consumed it).');
     else if (!ttftPass) console.log(`  - TTFT ${ms(firstDeltaMs)} exceeds the ${TTFT_GATE_MS} ms gate.`);
   }
   console.log('\nNOTE: this is the Phase-3 ROUGH smoke. Full sustained-load / minute-45 /');
