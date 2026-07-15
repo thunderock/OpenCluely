@@ -13,7 +13,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const whisperModelInput = document.getElementById('whisperModel');
     const whisperLanguageInput = document.getElementById('whisperLanguage');
     const whisperSegmentMsInput = document.getElementById('whisperSegmentMs');
-    const geminiKeyInput = document.getElementById('geminiKey');
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
     const activeSkillSelect = document.getElementById('activeSkill');
@@ -97,7 +96,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (whisperModelInput) whisperModelInput.value = settings.whisperModel || '';
         if (whisperLanguageInput) whisperLanguageInput.value = settings.whisperLanguage || '';
         if (whisperSegmentMsInput) whisperSegmentMsInput.value = settings.whisperSegmentMs || '';
-        if (geminiKeyInput) geminiKeyInput.value = settings.geminiKey || '';
         if (windowGapInput) windowGapInput.value = settings.windowGap || '';
 
         // Set C++ as default if no coding language is specified
@@ -175,7 +173,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (whisperModelInput) settings.whisperModel = whisperModelInput.value;
         if (whisperLanguageInput) settings.whisperLanguage = whisperLanguageInput.value;
         if (whisperSegmentMsInput) settings.whisperSegmentMs = whisperSegmentMsInput.value;
-        if (geminiKeyInput) settings.geminiKey = geminiKeyInput.value;
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
@@ -263,10 +260,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const refreshModelStatus = async () => {
         if (!modelStatus || !window.electronAPI || !window.electronAPI.getModelStatus) return;
-        if (llmProvider && llmProvider.value !== 'local') {
-            modelStatus.textContent = 'Not applicable for the Gemini provider.';
-            return;
-        }
         try {
             const s = await window.electronAPI.getModelStatus();
             modelStatus.textContent = renderStatusLine(s);
@@ -297,7 +290,6 @@ document.addEventListener('DOMContentLoaded', () => {
         whisperModelInput,
         whisperLanguageInput,
         whisperSegmentMsInput,
-        geminiKeyInput,
         windowGapInput
     ];
 

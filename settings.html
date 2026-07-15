@@ -459,11 +459,10 @@
                     <div class="settings-item">
                         <div>
                             <div class="settings-item-label">Provider</div>
-                            <div class="settings-item-description">Local runs privately on this machine (default). Gemini is a cloud fallback available only during the transition and is being removed.</div>
+                            <div class="settings-item-description">Local runs privately on this machine — no cloud, no API key.</div>
                         </div>
                         <select class="input-field" id="llmProvider">
                             <option value="local">Local (Ollama)</option>
-                            <option value="gemini">Gemini (cloud — being removed)</option>
                         </select>
                     </div>
 
@@ -527,22 +526,6 @@
                 </div>
             </div>
 
-            <div class="settings-section">
-                <div class="settings-section-title">
-                    <i class="fas fa-robot"></i>
-                    Gemini Settings
-                </div>
-                <div class="settings-section-content">
-                    <div class="settings-item">
-                        <div>
-                            <div class="settings-item-label">Google API Key</div>
-                            <div class="settings-item-description">Your Google API key for Gemini models</div>
-                        </div>
-                        <input type="password" class="input-field" id="geminiKey" placeholder="Enter your Google API key">
-                    </div>
-                </div>
-            </div>
-            
             <div class="settings-section">
                 <div class="settings-section-title">
                     <i class="fas fa-window-maximize"></i>

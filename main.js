@@ -107,9 +107,9 @@ class ApplicationController {
     this._utteranceDispatchInFlight = false;
     this._utteranceCoalesceMs = 800;
 
-    // First-run onboarding: detects missing .env / API key and triggers
-    // a settings-window prompt on first launch so users don't have to
-    // dig through docs to figure out they need a Gemini API key.
+    // First-run onboarding: detects a missing .env / uncompleted setup and
+    // triggers the onboarding wizard on first launch so users are guided
+    // through local model + speech setup.
     this.firstRunManager = new FirstRunManager({
       logger: logger,
       // .env and the sentinel both live in userData so they survive cwd
@@ -304,10 +304,9 @@ class ApplicationController {
   }
 
   setupNetworkConfiguration() {
-    // Gemini's cert-verify bypass + UA override now live inside the Gemini
-    // provider (SC3). Delegate to whichever provider is selected; a provider
-    // that needs no network hardening simply won't implement this, so the
-    // bypass disappears cleanly when Gemini is removed (Phase 3).
+    // Delegate any provider-owned network hardening to the selected provider.
+    // LocalProvider needs none, so it does not implement configureNetworkSession
+    // and this guarded delegate simply no-ops — no global cert/UA overrides run.
     const ses = session.defaultSession;
     const provider = require("./src/services/providers").getSelected();
     if (provider && typeof provider.configureNetworkSession === "function") {
@@ -597,15 +596,6 @@ class ApplicationController {
       }
     });
 
-    ipcMain.handle("set-gemini-api-key", (event, apiKey) => {
-      llmService.updateApiKey(apiKey);
-      return llmService.getStats();
-    });
-
-    ipcMain.handle("get-gemini-status", () => {
-      return llmService.getStats();
-    });
-
     // Window binding IPC handlers
     ipcMain.handle("set-window-binding", (event, enabled) => {
       return windowManager.setWindowBinding(enabled);
@@ -630,30 +620,6 @@ class ApplicationController {
     ipcMain.handle("move-bound-windows", (event, { deltaX, deltaY }) => {
       windowManager.moveBoundWindows(deltaX, deltaY);
       return windowManager.getWindowBindingStatus();
-    });
-
-    ipcMain.handle("test-gemini-connection", async () => {
-      return await llmService.testConnection();
-    });
-
-    ipcMain.handle("run-gemini-diagnostics", async () => {
-      try {
-        const connectivity = await llmService.checkNetworkConnectivity();
-        const apiTest = await llmService.testConnection();
-        
-        return {
-          success: true,
-          connectivity,
-          apiTest,
-          timestamp: new Date().toISOString()
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error.message,
-          timestamp: new Date().toISOString()
-        };
-      }
     });
 
     // Settings handlers
@@ -786,9 +752,9 @@ class ApplicationController {
     });
 
     // ── Local model engine (PROV-05) ──
-    // Provider-neutral / local-named handlers so they survive PROV-07 (the
-    // gemini-named handlers are deleted then). Mirrors the whisper
-    // download-progress pattern but emits STRUCTURED { status, percent } events.
+    // Provider-neutral / local-named handlers (they outlived the cloud path
+    // removed at PROV-07). Mirrors the whisper download-progress pattern but
+    // emits STRUCTURED { status, percent } events.
     ipcMain.handle("download-model", async (event, modelTag) => {
       try {
         const sender = event.sender;
@@ -859,7 +825,7 @@ class ApplicationController {
     });
 
     // Provider-neutral connection test (survives PROV-07; llmService is the
-    // registry-selected provider — Gemini today, Local after removal).
+    // registry-selected provider — Local, the sole engine after removal).
     ipcMain.handle("test-provider-connection", async () => {
       try {
         return await llmService.testConnection();
@@ -1604,11 +1570,10 @@ class ApplicationController {
       whisperModel: process.env.WHISPER_MODEL || "turbo",
       whisperLanguage: process.env.WHISPER_LANGUAGE || "en",
       whisperSegmentMs: process.env.WHISPER_SEGMENT_MS || "4000",
-      geminiKey: process.env.GEMINI_API_KEY || "",
 
       // AI model engine (PROV-06). Read from config so the UI reflects the live
       // provider/model resolution (config derives these from LLM_PROVIDER /
-      // LOCAL_MODEL in .env). geminiKey above stays until PROV-07 removal.
+      // LOCAL_MODEL in .env).
       provider: config.get("llm.provider"),
       model: config.get("llm.local.model"),
       curatedModels: config.get("llm.local.curatedModels"),
@@ -1671,15 +1636,12 @@ class ApplicationController {
       if (settings.whisperSegmentMs !== undefined) {
         envUpdates.WHISPER_SEGMENT_MS = String(settings.whisperSegmentMs);
       }
-      if (settings.geminiKey !== undefined) {
-        envUpdates.GEMINI_API_KEY = settings.geminiKey;
-      }
 
       // AI model engine (PROV-06). Persist to .env so the selection survives a
       // restart and is applied on next launch: the provider facade resolves the
       // selected provider at module load, so this is restart-to-apply (no live
       // hot-swap), matching the app's other .env-backed settings.
-      if (settings.provider === "local" || settings.provider === "gemini") {
+      if (settings.provider === "local") {
         envUpdates.LLM_PROVIDER = settings.provider;
       }
       if (settings.model !== undefined) {
@@ -1700,22 +1662,6 @@ class ApplicationController {
           provider: settings.provider,
           model: settings.model,
         });
-      }
-
-      // If the Gemini key was just saved, reinitialize the LLM service
-      // so the new client picks up the key. Without this, the test-
-      // connection button in the onboarding wizard fails with
-      // "Service not initialized" because the client was first created
-      // at app startup, before any key was set.
-      if (settings.geminiKey !== undefined && envUpdates.GEMINI_API_KEY !== undefined) {
-        try {
-          llmService.initializeClient();
-          logger.info("LLM service reinitialized after Gemini key update");
-        } catch (e) {
-          logger.warn("Failed to reinitialize LLM service after Gemini key update", {
-            error: e.message
-          });
-        }
       }
 
       // Reinitialize speech service when provider OR whisper command

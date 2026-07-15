@@ -5,13 +5,12 @@
  * everything via the electronAPI bridge exposed by preload.js:
  *
  *   1. Welcome
- *   2. Gemini API key entry + live connection test
- *   3. Speech provider choice (Whisper / Azure / Skip)
- *   4. Whisper detect + (optional) install — only shown when whisper
- *   5. Whisper model download — only shown when whisper
- *   6. Local model engine (Ollama) guide-install + re-check (openwhispr-style)
- *   7. Local model pull (qwen3-vl:8b) with resumable progress + preflight warn
- *   8. Star-the-repo prompt + summary
+ *   2. Speech provider choice (Whisper / Azure / Skip)
+ *   3. Whisper detect + (optional) install — only shown when whisper
+ *   4. Whisper model download — only shown when whisper
+ *   5. Local model engine (Ollama) guide-install + re-check (openwhispr-style)
+ *   6. Local model pull (qwen3-vl:8b) with resumable progress + preflight warn
+ *   7. Star-the-repo prompt + summary
  */
 
 (function () {
@@ -43,8 +42,6 @@
   // ── State ─────────────────────────────────────────────────────────
   const state = {
     step: 0,
-    geminiKey: '',
-    geminiConfigured: false, // a key already exists in .env from a prior run
     speechProvider: null, // 'whisper' | 'azure' | 'skip'
     azureKey: '',
     azureRegion: '',
@@ -62,9 +59,7 @@
 
   // Screens are: welcome → speech → whisper? → ollama → model-pull → finish
   // The whisper screen is only visited if state.speechProvider === 'whisper'.
-  // The Gemini 'apikey' screen is NO LONGER a forced onboarding step: Local is
-  // the default engine, so the app works with no cloud key. The Gemini key is
-  // optional and lives in Settings during the transition (removed at PROV-07).
+  // Local is the default (and only) engine, so the app works with no cloud key.
   const stepScreens = ['welcome', 'speech'];
 
   // ── Step rendering ────────────────────────────────────────────────
@@ -147,9 +142,6 @@
     switch (name) {
       case 'welcome':
         return true;
-      case 'apikey':
-        // A key already in .env is enough — don't force a re-entry.
-        return !!state.geminiKey.trim() || state.geminiConfigured;
       case 'speech':
         if (state.speechProvider === 'azure') {
           return !!state.azureKey.trim() && !!state.azureRegion.trim();
@@ -173,47 +165,6 @@
         return true;
     }
   }
-
-  // ── Wire up: API key ──────────────────────────────────────────────
-  const geminiInput = $('#geminiKey');
-  const toggleVis = $('#toggleVis');
-  const keyStatus = $('#keyStatus');
-
-  function setKeyStatus(state_, text) {
-    keyStatus.className = `status-pill ${state_}`;
-    keyStatus.style.display = 'inline-flex';
-    const icon = keyStatus.querySelector('i');
-    const txt = keyStatus.querySelector('.text');
-    if (state_ === 'testing') {
-      icon.className = 'fas fa-circle-notch fa-spin';
-    } else if (state_ === 'success') {
-      icon.className = 'fas fa-check-circle';
-    } else if (state_ === 'error') {
-      icon.className = 'fas fa-circle-xmark';
-    } else {
-      icon.className = 'fas fa-circle-info';
-    }
-    txt.textContent = text;
-  }
-
-  geminiInput.addEventListener('input', () => {
-    state.geminiKey = geminiInput.value.trim();
-    if (!state.geminiKey) {
-      keyStatus.style.display = 'none';
-    } else if (keyStatus.classList.contains('success')) {
-      // Keep success state — they had a valid key, may be editing
-    } else {
-      setKeyStatus('idle', 'Key entered');
-    }
-  });
-
-  toggleVis.addEventListener('click', () => {
-    const showing = geminiInput.type === 'text';
-    geminiInput.type = showing ? 'password' : 'text';
-    toggleVis.innerHTML = showing
-      ? '<i class="fas fa-eye"></i>'
-      : '<i class="fas fa-eye-slash"></i>';
-  });
 
   // ── Wire up: Speech choices ───────────────────────────────────────
   $$('#speechChoices .choice-card').forEach((card) => {
@@ -636,11 +587,6 @@
   // ── Wire up: Finish screen ────────────────────────────────────────
   function populateSummary() {
     const rows = [];
-    rows.push({
-      label: '<i class="fas fa-key"></i> Gemini API',
-      value: (state.geminiKey || state.geminiConfigured) ? 'Configured' : 'Missing',
-      cls: (state.geminiKey || state.geminiConfigured) ? 'ok' : 'skip',
-    });
     if (state.speechProvider === 'whisper') {
       rows.push({
         label: '<i class="fas fa-microphone"></i> Speech',
@@ -699,19 +645,10 @@
   nextBtn.addEventListener('click', async () => {
     const name = currentScreenName();
     if (!canAdvance()) {
-      // Lightly nudge the user
-      if (name === 'apikey') setKeyStatus('error', 'Enter a Gemini API key');
       return;
     }
 
-    // Persist settings on speech selection (Azure path), since we
-    // already saved geminiKey on test; do it here too if user skipped
-    // testing.
-    if (name === 'apikey' && state.geminiKey && window.electronAPI) {
-      try {
-        await window.electronAPI.saveSettings({ geminiKey: state.geminiKey });
-      } catch (_) { /* surfaced elsewhere */ }
-    }
+    // Persist speech settings on the speech screen (Azure path).
     if (name === 'speech' && window.electronAPI) {
       try {
         const payload = {
@@ -842,19 +779,4 @@
 
   // ── Boot ──────────────────────────────────────────────────────────
   showScreen('welcome');
-
-  // Pre-populate Gemini key from existing .env (if any) so users with
-  // a partial config don't have to retype.
-  if (window.electronAPI && window.electronAPI.getFirstRunStatus) {
-    window.electronAPI.getFirstRunStatus().then((s) => {
-      if (s && s.geminiConfigured) {
-        // We can't read the key back (settings returns empty for keys),
-        // but we can mark status as success if the env file already has one
-        // and let the user advance without retyping it.
-        state.geminiConfigured = true;
-        setKeyStatus('success', 'Already configured — click Continue');
-        geminiInput.placeholder = '•••••••••••••••• (already set)';
-      }
-    }).catch(() => {});
-  }
 })();
