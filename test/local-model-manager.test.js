@@ -253,3 +253,40 @@ test('start() returns not-installed (no spawn) when the ollama binary is absent'
   assert.equal(st.reason, 'not-installed');
   assert.equal(st.installed, false);
 });
+
+// ── 8. Regression (ollama-not-detected): serverUp must NOT depend on global fetch ──
+// The 2026-07-14 logs show the daemon ADOPTED (the supervisor's Node-http probe
+// succeeded → state:'adopted') while getStatus().serverUp was false at the SAME
+// instant/process — because _probeVersion used the ambient global `fetch`, whose
+// transport in the Electron MAIN process (Chromium net stack) fails for the
+// loopback daemon that Node's http reaches fine. A reachable daemon must count as
+// running regardless of the global fetch, so the probe must use a deterministic
+// Node http transport (mirroring the supervisor's probeHttp).
+test('getStatus().serverUp stays true when the daemon is HTTP-reachable but global fetch is broken', async () => {
+  const port = await getFreePort();
+  const daemon = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ version: '0.32.0' })); // Ollama /api/version shape
+  });
+  await new Promise((resolve) => daemon.listen(port, '127.0.0.1', resolve));
+
+  // Reproduce the Electron main-process condition without a network: the global
+  // fetch is unusable, but the daemon answers over Node http on loopback.
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('fetch failed (Electron main net stack)'); };
+
+  const manager = new LocalModelManager({
+    supervisor: fakeSupervisor({ name: 'ollama', state: 'adopted', owned: false, pid: null }),
+    ollama: inertOllama(),
+    logger: noopLogger,
+  });
+  manager.host = `http://127.0.0.1:${port}`; // point the version probe at the test daemon
+
+  try {
+    const st = await manager.getStatus();
+    assert.equal(st.serverUp, true, 'a reachable daemon must count as running regardless of global fetch');
+  } finally {
+    globalThis.fetch = origFetch;
+    await new Promise((resolve) => daemon.close(resolve));
+  }
+});

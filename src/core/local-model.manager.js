@@ -214,16 +214,22 @@ class LocalModelManager {
   }
 
   async _probeVersion(timeoutMs = 1000) {
-    // Built-in fetch (Electron 29 / Node 18+), timeout-bounded so it never hangs.
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    // Probe /api/version over Node `http`, NOT the global `fetch`: in the Electron
+    // main process `fetch` is Chromium-net-backed and returns a false negative for
+    // the loopback daemon that Node `http` reaches fine. Reuse the supervisor's
+    // probeHttp — the same deterministic transport that already adopts the daemon —
+    // so a reachable daemon is reported serverUp regardless of the ambient fetch.
     try {
-      const res = await fetch(`${this.host}/api/version`, { signal: ctrl.signal });
-      return !!(res && res.ok);
+      const u = new URL(this.host);
+      const port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80);
+      return await ServiceSupervisor.probeHttp({
+        host: u.hostname,
+        port,
+        path: '/api/version',
+        timeoutMs,
+      });
     } catch (_) {
       return false;
-    } finally {
-      clearTimeout(timer);
     }
   }
 
