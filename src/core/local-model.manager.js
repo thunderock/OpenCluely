@@ -151,9 +151,12 @@ class LocalModelManager {
 
   // ── Health / status ──
 
-  async getStatus() {
+  async getStatus({ probeResponds = true } = {}) {
     // Fuse supervisor lifecycle state with three-level health so the UI can
     // give three distinct messages (server down vs model missing vs unhealthy).
+    // `probeResponds:false` skips the (bounded) model-liveness generate for the
+    // hot detection path (onboarding runOllamaDetect / status polls), which only
+    // needs serverUp — so that path never triggers a generate at all.
     const s = this.supervisor.getStatus(); // { name, state, attempt, pid, owned }
     const serverUp = await this._probeVersion();
     let modelPresent = false;
@@ -164,7 +167,7 @@ class LocalModelManager {
       // the onboarding Continue gate keys off serverUp alone.
       try {
         modelPresent = await this._isModelPresent();
-        if (modelPresent) modelResponds = await this._modelResponds();
+        if (modelPresent && probeResponds) modelResponds = await this._modelResponds();
       } catch (e) {
         this.logger.warn('model probe failed after serverUp; keeping serverUp=true', { error: e.message });
       }
@@ -265,12 +268,24 @@ class LocalModelManager {
     }
   }
 
-  async _modelResponds(tag = this.model) {
+  async _modelResponds(tag = this.model, { timeoutMs = 2500 } = {}) {
+    // Cheap, hard-bounded liveness ping — getStatus() must NEVER hang on it. A
+    // cold model load can exceed timeoutMs on the very first probe (resolves
+    // false, not a tens-of-seconds hang on "Probing"); once resident
+    // (keep_alive:-1 + warmUp) it answers in ms. think:false stops qwen3 from
+    // emitting reasoning and num_predict:1 caps decode to a single token, so the
+    // probe is a ping, not a full generation.
+    let timer;
     try {
-      await this.ollama.generate({ model: tag, prompt: '', keep_alive: this.keepAlive });
-      return true;
+      const ping = this.ollama
+        .generate({ model: tag, prompt: '', think: false, keep_alive: this.keepAlive, options: { num_predict: 1 } })
+        .then(() => true, () => false);
+      const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); });
+      return await Promise.race([ping, timeout]);
     } catch (_) {
       return false;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

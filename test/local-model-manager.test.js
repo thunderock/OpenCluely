@@ -361,3 +361,68 @@ test('getStatus() keeps serverUp true when a downstream model probe throws', asy
   assert.equal(st.modelPresent, false);
   assert.equal(st.modelResponds, false);
 });
+
+// ── 11. "Probing" hang: _modelResponds must be hard-bounded, never blocking on a
+// cold model load. The old probe did a full ollama.generate() with no timeout, so
+// getStatus() (onboarding/status poll) sat on "Probing" for tens of seconds while
+// the 10 GB model cold-loaded. The liveness ping must return within its timeout.
+test('_modelResponds returns false (never hangs) when the model generate stalls', { timeout: 3000 }, async () => {
+  const manager = new LocalModelManager({
+    supervisor: fakeSupervisor({ state: 'adopted', owned: false, pid: null }),
+    ollama: {
+      list: async () => ({ models: [] }),
+      pull: async () => (async function* () {})(),
+      generate: () => new Promise(() => {}), // never resolves — simulates a cold-loading model
+    },
+    logger: noopLogger,
+  });
+
+  const started = Date.now();
+  const responds = await manager._modelResponds('qwen3-vl:8b', { timeoutMs: 80 });
+  assert.equal(responds, false, 'a stalled generate resolves false, not a hang');
+  assert.ok(Date.now() - started < 1500, 'bounded by timeoutMs, not the never-resolving generate');
+});
+
+// ── 12. Liveness ping is CHEAP: think:false (no qwen3 reasoning) + num_predict:1
+// (no full decode) — so even when the model does respond, the probe is a ping.
+test('_modelResponds issues a cheap liveness ping (think:false, num_predict:1)', async () => {
+  let seen = null;
+  const manager = new LocalModelManager({
+    supervisor: fakeSupervisor({ state: 'adopted', owned: false, pid: null }),
+    ollama: {
+      list: async () => ({ models: [] }),
+      pull: async () => (async function* () {})(),
+      generate: async (opts) => { seen = opts; return {}; },
+    },
+    logger: noopLogger,
+  });
+
+  const responds = await manager._modelResponds('qwen3-vl:8b');
+  assert.equal(responds, true);
+  assert.ok(seen, 'generate was called');
+  assert.equal(seen.think, false, 'think disabled so qwen3 emits no reasoning');
+  assert.equal(seen.options && seen.options.num_predict, 1, 'decode capped at a single token');
+});
+
+// ── 13. Fast detection path: getStatus({ probeResponds:false }) reports
+// serverUp/modelPresent WITHOUT a model generate — the serverUp-gated onboarding
+// detect (onboarding.js runOllamaDetect) uses it so it never triggers a generate.
+test('getStatus({ probeResponds:false }) reports server/model health without any generate', async () => {
+  let generated = false;
+  const manager = new LocalModelManager({
+    supervisor: fakeSupervisor({ name: 'ollama', state: 'adopted', owned: false, pid: null }),
+    ollama: {
+      list: async () => ({ models: [{ name: 'qwen3-vl:8b' }] }),
+      pull: async () => (async function* () {})(),
+      generate: async () => { generated = true; return {}; },
+    },
+    logger: noopLogger,
+  });
+  manager._probeVersion = async () => true;
+
+  const st = await manager.getStatus({ probeResponds: false });
+  assert.equal(st.serverUp, true);
+  assert.equal(st.modelPresent, true);
+  assert.equal(st.modelResponds, false, 'not probed on the fast detection path');
+  assert.equal(generated, false, 'no model generate on the detection path (no "Probing" hang)');
+});

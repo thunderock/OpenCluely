@@ -61,7 +61,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Local model engine (PROV-05) — mirrors the whisper download-progress
   // bridges above, but pull progress arrives as structured { status, percent }.
   pullModel: (modelTag) => ipcRenderer.invoke('download-model', modelTag),
-  getModelStatus: () => ipcRenderer.invoke('get-model-status'),
+  getModelStatus: (opts) => ipcRenderer.invoke('get-model-status', opts),
   listInstalledModels: () => ipcRenderer.invoke('list-installed-models'),
   modelPreflight: () => ipcRenderer.invoke('model-preflight'),
   recoverModel: (action) => ipcRenderer.invoke('recover-model', action),

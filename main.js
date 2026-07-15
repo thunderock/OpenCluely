@@ -806,9 +806,11 @@ class ApplicationController {
       }
     });
 
-    ipcMain.handle("get-model-status", async () => {
+    ipcMain.handle("get-model-status", async (_event, opts) => {
       try {
-        return await this.getLocalModelManager().getStatus();
+        // opts.probeResponds:false → fast detection path (no model generate); the
+        // onboarding serverUp gate uses it so it never blocks on "Probing".
+        return await this.getLocalModelManager().getStatus(opts);
       } catch (e) {
         return { serverUp: false, error: e.message };
       }

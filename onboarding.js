@@ -489,7 +489,9 @@
     // server is up. We never bundle Ollama or silently fail — we point the user
     // at the installer (openwhispr-style) and let them re-check.
     try {
-      const s = (await window.electronAPI.getModelStatus()) || {};
+      // Detection only needs serverUp — skip the model-liveness generate so this
+      // never blocks on "Probing" while a cold model loads.
+      const s = (await window.electronAPI.getModelStatus({ probeResponds: false })) || {};
       state.ollamaDetected = !!s.serverUp;
     } catch (_) {
       state.ollamaDetected = false;
