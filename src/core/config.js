@@ -52,6 +52,10 @@ class ConfigManager {
           host: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
           model: process.env.LOCAL_MODEL || 'qwen3-vl:8b',
           keepAlive: -1,
+          // qwen3(-vl) reasons out loud by default; a reply-suggester wants concise,
+          // fast answers (GEN-01), so thinking is OFF by default (serialize appends the
+          // qwen3 `/no_think` soft-switch). Set LOCAL_THINK=1 to re-enable reasoning.
+          think: process.env.LOCAL_THINK === '1' || process.env.LOCAL_THINK === 'true',
           curatedModels: ['qwen3-vl:8b', 'qwen3-vl:30b', 'gemma3:4b', 'gemma3:12b']
         },
 

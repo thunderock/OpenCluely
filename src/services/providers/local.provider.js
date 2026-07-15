@@ -28,6 +28,7 @@ class LocalProvider extends LLMProvider {
     this.host = local.host || 'http://127.0.0.1:11434';
     this.model = local.model || null;
     this.keepAlive = local.keepAlive != null ? local.keepAlive : -1;
+    this.think = local.think === true; // qwen3 reasoning OFF by default → concise replies (GEN-01)
 
     this.client = null;
     this.isInitialized = false;
@@ -49,6 +50,7 @@ class LocalProvider extends LLMProvider {
     this.host = local.host || this.host;
     this.model = local.model || this.model;
     this.keepAlive = local.keepAlive != null ? local.keepAlive : this.keepAlive;
+    this.think = local.think === true; // re-read so a settings change takes effect on relaunch
 
     // The Azure STT browser-DOM polyfill (speech.service.js, required at main.js
     // startup) poisons global.URL with a fake that has no `searchParams` — which
@@ -95,7 +97,12 @@ class LocalProvider extends LLMProvider {
    */
   serialize(neutral) {
     const messages = [];
-    const sys = [neutral.systemPrompt, neutral.mdContext].filter(Boolean).join('\n\n');
+    let sys = [neutral.systemPrompt, neutral.mdContext].filter(Boolean).join('\n\n');
+    // qwen3(-vl) is a reasoning model that emits a verbose <think> chain-of-thought
+    // by default — wrong for a concise reply-suggester (GEN-01). The `/no_think`
+    // soft-switch disables it (Ollama's /v1 has no `think` param; the qwen3 chat
+    // template honors /no_think in the messages). Gated by config.llm.local.think.
+    if (!this.think) sys = sys ? `${sys}\n\n/no_think` : '/no_think';
     if (sys) messages.push({ role: 'system', content: sys });
     for (const h of neutral.history || []) {
       messages.push({ role: h.role === 'model' ? 'assistant' : 'user', content: h.content });

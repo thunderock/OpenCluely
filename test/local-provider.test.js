@@ -59,6 +59,7 @@ describe('LocalProvider.serialize() → OpenAI messages shape (SC4)', () => {
 
   test('system message present when systemPrompt set; history model→assistant rename', () => {
     const p = new LocalProvider();
+    p.think = true; // isolate wire-shape assertions from the /no_think concise switch
     const { messages } = p.serialize(textNeutral());
 
     assert.equal(messages[0].role, 'system');
@@ -76,12 +77,14 @@ describe('LocalProvider.serialize() → OpenAI messages shape (SC4)', () => {
 
   test('no system message when systemPrompt + mdContext are both empty', () => {
     const p = new LocalProvider();
+    p.think = true; // with thinking on there is no /no_think system message to prepend
     const { messages } = p.serialize(textNeutral({ systemPrompt: null, mdContext: '', history: [] }));
     assert.equal(messages[0].role, 'user');
   });
 
   test('mdContext is appended to the system prefix (wired now for Phase 5)', () => {
     const p = new LocalProvider();
+    p.think = true; // isolate the mdContext prefix from the /no_think switch
     const { messages } = p.serialize(textNeutral({ systemPrompt: 'SYS', mdContext: 'NOTES', history: [] }));
     assert.equal(messages[0].role, 'system');
     assert.equal(messages[0].content, 'SYS\n\nNOTES');
@@ -113,6 +116,33 @@ describe('LocalProvider.serialize() → OpenAI messages shape (SC4)', () => {
     assert.equal(userMsg.content.length, 3); // text + 2 images
     assert.equal(userMsg.content[1].image_url.url, 'data:image/png;base64,AAAA');
     assert.equal(userMsg.content[2].image_url.url, 'data:image/jpeg;base64,BBBB');
+  });
+});
+
+describe('LocalProvider concise mode: qwen3 /no_think soft-switch (GEN-01)', () => {
+  test('think OFF (default) → /no_think appended to the system message', () => {
+    const p = new LocalProvider();
+    p.think = false;
+    const { messages } = p.serialize(textNeutral({ systemPrompt: 'SYS', mdContext: '', history: [] }));
+    assert.equal(messages[0].role, 'system');
+    assert.ok(messages[0].content.startsWith('SYS'), 'original system prompt preserved');
+    assert.ok(messages[0].content.endsWith('/no_think'), 'system message carries the /no_think switch');
+  });
+
+  test('think OFF with no systemPrompt → a bare /no_think system message is prepended', () => {
+    const p = new LocalProvider();
+    p.think = false;
+    const { messages } = p.serialize(textNeutral({ systemPrompt: null, mdContext: '', history: [] }));
+    assert.equal(messages[0].role, 'system');
+    assert.equal(messages[0].content, '/no_think');
+  });
+
+  test('think ON → no /no_think switch (full reasoning preserved)', () => {
+    const p = new LocalProvider();
+    p.think = true;
+    const { messages } = p.serialize(textNeutral({ systemPrompt: 'SYS', mdContext: '', history: [] }));
+    assert.equal(messages[0].content, 'SYS');
+    assert.ok(!messages[0].content.includes('/no_think'));
   });
 });
 
