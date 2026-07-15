@@ -426,3 +426,45 @@ test('getStatus({ probeResponds:false }) reports server/model health without any
   assert.equal(st.modelResponds, false, 'not probed on the fast detection path');
   assert.equal(generated, false, 'no model generate on the detection path (no "Probing" hang)');
 });
+
+// ── 14. Binary resolution: the fallback list must cover the official
+// ~/.ollama/bin install plus the standard macOS locations, so own-if-started
+// finds the binary under Electron's stripped GUI PATH (where `which` fails).
+test('_ollamaBinFallbacks covers ~/.ollama/bin and the standard install locations', () => {
+  const manager = new LocalModelManager({
+    supervisor: fakeSupervisor({ state: 'idle', owned: false, pid: null }),
+    ollama: inertOllama(),
+    logger: noopLogger,
+  });
+  const fallbacks = manager._ollamaBinFallbacks();
+  const homeBin = path.join(os.homedir(), '.ollama', 'bin', 'ollama');
+  assert.ok(fallbacks.includes(homeBin), 'the official ~/.ollama/bin/ollama path is a fallback');
+  if (process.platform === 'darwin') {
+    assert.ok(fallbacks.includes('/opt/homebrew/bin/ollama'), 'Homebrew (Apple Silicon) path present');
+    assert.ok(fallbacks.includes('/usr/local/bin/ollama'), 'Homebrew (Intel)/manual path present');
+  }
+});
+
+// ── 15. Spawn PATH: Electron's GUI PATH omits /opt/homebrew/bin, so a spawned
+// `ollama serve` (and any subprocess it resolves) must run with the standard bin
+// dirs PREPENDED to PATH — while preserving the inherited PATH at the tail.
+test('the ollama supervisor spawns with bin dirs prepended to PATH (Electron GUI PATH gap)', () => {
+  const origPath = process.env.PATH;
+  process.env.PATH = '/usr/bin:/bin';
+  try {
+    // No injected supervisor → the manager builds the real ServiceSupervisor with
+    // its internal def, so def.env.PATH is observable. Construction never spawns.
+    const manager = new LocalModelManager({ ollama: inertOllama(), logger: noopLogger });
+    const envPath = manager.supervisor.def.env.PATH;
+    assert.equal(typeof envPath, 'string', 'def.env.PATH is set');
+    assert.ok(envPath.endsWith('/usr/bin:/bin'), 'inherited PATH preserved at the tail');
+    assert.ok(envPath.length > '/usr/bin:/bin'.length, 'extra bin dirs prepended');
+    const dirs = envPath.split(path.delimiter);
+    assert.ok(dirs.some((d) => d.endsWith(path.join('.ollama', 'bin'))), '~/.ollama/bin prepended');
+    if (process.platform === 'darwin') {
+      assert.ok(dirs.includes('/opt/homebrew/bin'), 'Homebrew bin dir prepended');
+    }
+  } finally {
+    process.env.PATH = origPath;
+  }
+});

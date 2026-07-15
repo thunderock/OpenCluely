@@ -59,7 +59,10 @@ class LocalModelManager {
       name: 'ollama',
       command: this.ollamaBin || 'ollama',
       args: ['serve'],
-      env: { OLLAMA_HOST: ollamaHost, OLLAMA_KEEP_ALIVE: String(this.keepAlive) },
+      // Electron's stripped GUI PATH omits /opt/homebrew/bin etc., so prepend the
+      // standard ollama bin dirs (see _buildSpawnPath — it also folds the inherited
+      // PATH back in, since the supervisor merges def.env over process.env).
+      env: { OLLAMA_HOST: ollamaHost, OLLAMA_KEEP_ALIVE: String(this.keepAlive), PATH: this._buildSpawnPath() },
       healthCheck: { type: 'http', port: 11434, path: '/', timeoutMs: 1000 },
       backoff: { initialDelayMs: 500, multiplier: 2, maxDelayMs: 15000, maxRetries: 8 },
       startupTimeoutMs: 30000,
@@ -327,15 +330,41 @@ class LocalModelManager {
         }
       } catch (_) { /* ignore */ }
     }
-    const fallbacks = isWin
-      ? []
-      : process.platform === 'darwin'
-        ? ['/opt/homebrew/bin/ollama', '/usr/local/bin/ollama', '/Applications/Ollama.app/Contents/Resources/ollama']
-        : ['/usr/local/bin/ollama', '/usr/bin/ollama'];
-    for (const p of fallbacks) {
+    for (const p of this._ollamaBinFallbacks()) {
       try { if (fs.existsSync(p)) return p; } catch (_) { /* ignore */ }
     }
     return null;
+  }
+
+  _ollamaBinFallbacks() {
+    // Standard install locations checked when `ollama` is not on PATH — Electron's
+    // stripped GUI PATH makes `which ollama` fail even when it IS installed, so
+    // own-if-started would otherwise never find the binary and never spawn.
+    if (process.platform === 'win32') return [];
+    const homeBin = path.join(os.homedir(), '.ollama', 'bin', 'ollama'); // official install-to-home
+    if (process.platform === 'darwin') {
+      return [
+        '/opt/homebrew/bin/ollama', // Homebrew (Apple Silicon)
+        '/usr/local/bin/ollama', // Homebrew (Intel) / manual
+        homeBin,
+        '/Applications/Ollama.app/Contents/Resources/ollama', // Ollama.app bundle
+      ];
+    }
+    return ['/usr/local/bin/ollama', '/usr/bin/ollama', homeBin];
+  }
+
+  _buildSpawnPath() {
+    // Prepend the ollama bin dirs (the resolved binary's dir + the standard
+    // fallbacks) to the inherited PATH so a spawned `ollama serve` — and anything
+    // it resolves — works under Electron's stripped GUI PATH. Prepend, never
+    // replace: the supervisor merges def.env over process.env, so the inherited
+    // PATH must be folded back in here or it would be dropped entirely.
+    const dirs = new Set();
+    if (this.ollamaBin) dirs.add(path.dirname(this.ollamaBin));
+    for (const p of this._ollamaBinFallbacks()) dirs.add(path.dirname(p));
+    const prepend = [...dirs].join(path.delimiter);
+    const base = process.env.PATH || '';
+    return base ? `${prepend}${path.delimiter}${base}` : prepend;
   }
 }
 
