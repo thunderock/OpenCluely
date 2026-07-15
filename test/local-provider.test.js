@@ -7,10 +7,10 @@
 //     'model'->'assistant' history rename, base64 data-URL image_url part,
 //     plain-string content when there are no images) — the SC4 wire-shape site.
 //  2) The provider degrades gracefully with Ollama down (constructs without
-//     throwing; canned fallback), and the registry + facade select Local by
-//     default (Gemini stays registered).
+//     throwing; canned fallback), and the registry + facade select Local
+//     (the sole engine after PROV-07 removed the cloud path).
 //
-// Mirrors test/gemini-request-parity.test.js + test/request-builder.test.js.
+// Mirrors test/request-builder.test.js.
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
@@ -230,10 +230,21 @@ describe('Registry + facade resolve LocalProvider by default (PROV-06)', () => {
     assert.equal(registry.getSelected().getStats().provider, 'local');
   });
 
-  test('gemini stays registered during the transition window', () => {
+  test('cloud provider is removed; only local is registered (PROV-07)', () => {
     const registry = require('../src/services/providers');
-    assert.ok(registry.get('gemini'), 'gemini must remain registered until PROV-07');
     assert.ok(registry.get('local'), 'local must be registered');
+    assert.equal(registry.get('gemini'), undefined, 'the cloud provider must be gone after PROV-07');
+  });
+
+  test('an unknown/stale selection falls back to local', () => {
+    const registry = require('../src/services/providers');
+    const prev = registry.selected;
+    try {
+      registry.selected = 'gemini'; // simulate a stale LLM_PROVIDER=gemini in an old .env
+      assert.equal(registry.getSelected().getStats().provider, 'local');
+    } finally {
+      registry.selected = prev;
+    }
   });
 
   test('facade (llm.service) resolves to LocalProvider', () => {

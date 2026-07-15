@@ -75,7 +75,7 @@ Remember: default to a short, ready-to-use suggestion; expand only when the ques
 
   // ── Neutral request builders (assembly only; no provider wire shape) ──
 
-  // Replicates buildGeminiRequest / buildGeminiRequestWithHistory (text path).
+  // Text path (assembly only; provider serializes to its own wire shape).
   // History cap: 15 recent events.
   buildTextRequest(text, activeSkill, sessionMemory = [], programmingLanguage = null, mdContext = '') {
     const sessionManager = this.sessionManager;

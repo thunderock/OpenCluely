@@ -39,10 +39,9 @@ class ConfigManager {
       },
 
       llm: {
-        // Provider selection (PROV-06). Default Local; overridable via env so
-        // the transition window can flip back to Gemini without a code change.
-        // The registry (index.js) is NOT wired to this key yet — 03-03 does
-        // that — so the app keeps running on the proven Gemini path until then.
+        // Provider selection (PROV-06). Local is the only engine after PROV-07
+        // removed the cloud path; the key stays env-overridable so Phase-7 CLI
+        // backends can be selected without a code change.
         provider: process.env.LLM_PROVIDER || 'local',
 
         // Per-provider block for the local engine. `host` is the client base
@@ -57,23 +56,6 @@ class ConfigManager {
           // qwen3 `/no_think` soft-switch). Set LOCAL_THINK=1 to re-enable reasoning.
           think: process.env.LOCAL_THINK === '1' || process.env.LOCAL_THINK === 'true',
           curatedModels: ['qwen3-vl:8b', 'qwen3-vl:30b', 'gemma3:4b', 'gemma3:12b']
-        },
-
-        // KEEP verbatim during the Phase-3 transition — removed at PROV-07.
-        gemini: {
-          model: 'gemini-3.1-flash-lite',
-          fallbackModels: ['gemini-2.5-flash-lite', 'gemini-3.5-flash'],
-          maxRetries: 3,
-          timeout: 30000,
-          fallbackEnabled: true,
-          enableFallbackMethod: true,
-          generation: {
-            temperature: 0.7,
-            topK: 32,
-            topP: 0.9,
-            maxOutputTokens: 4096,
-            thinkingConfig: { thinkingBudget: 0 }
-          }
         }
       },
 

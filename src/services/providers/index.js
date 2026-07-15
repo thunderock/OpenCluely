@@ -1,24 +1,21 @@
 // Provider registry (PROV-06 selection).
 //
 // Instantiates the concrete providers and resolves the "selected provider" from
-// config (`llm.provider`, env-overridable via LLM_PROVIDER). Local is the
-// default; Gemini stays registered/selectable through the Phase-3 transition
-// window so validation can flip back to the proven cloud path — the gemini
-// registration is removed only at PROV-07 (03-08).
+// config (`llm.provider`, env-overridable via LLM_PROVIDER). Local is the only
+// engine (PROV-07 removed the cloud path); the registry keeps its multi-provider
+// shape so Phase-7 CLI backends slot in with no rework.
 //
 // The facade (src/services/llm.service.js) calls `getSelected()` ON this object
 // (preserving `this`), so keep the singleton-object export shape.
 
-const { GeminiProvider } = require('./gemini.provider');
 const { LocalProvider } = require('./local.provider');
 const config = require('../../core/config');
 
-const gemini = new GeminiProvider();
 const local = new LocalProvider();
 
 const registry = {
-  providers: { gemini, local },
-  // Config-driven selection (Local default). Was hardcoded 'gemini' in Phase 2.
+  providers: { local },
+  // Config-driven selection (Local default).
   selected: config.get('llm.provider'),
 
   register(name, provider) {
@@ -30,10 +27,11 @@ const registry = {
     return this.providers[name];
   },
 
-  // Harden against a mis-set/unknown selection: never return undefined (which
-  // would break the facade). Fall back to Local, then Gemini.
+  // Harden against a mis-set/unknown selection (e.g. a stale cloud value left in
+  // an old .env's LLM_PROVIDER): never return undefined (which would break the
+  // facade). Any unknown selection resolves to Local — the only engine.
   getSelected() {
-    return this.providers[this.selected] || this.providers.local || this.providers.gemini;
+    return this.providers[this.selected] || this.providers.local;
   }
 };
 

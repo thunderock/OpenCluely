@@ -1,6 +1,7 @@
 // LocalProvider (PROV-03 text-stream / PROV-04 multimodal-direct / SC4).
 //
-// Sibling of GeminiProvider: answers text (streaming) and screenshots
+// The sole LLM engine (PROV-07 removed the cloud path): answers text
+// (streaming) and screenshots
 // (multimodal-direct, NO OCR) from the local `qwen3-vl:8b` model over the
 // OpenAI-compatible endpoint `http://127.0.0.1:11434/v1` using the `openai`
 // SDK. This is the core answer engine ("if all else fails, this works").
@@ -35,7 +36,7 @@ class LocalProvider extends LLMProvider {
     this.requestCount = 0;
     this.errorCount = 0;
 
-    // Real singletons by default (mirrors GeminiProvider / the Phase-1 DI shape).
+    // Real singletons by default (the Phase-1 DI shape).
     this.requestBuilder = new RequestBuilder();
 
     this.initializeClient();
@@ -217,8 +218,7 @@ class LocalProvider extends LLMProvider {
 
   /**
    * Normalize all triple-backtick code fences to the selected programming
-   * language tag. Pure, provider-agnostic string normalization — copied
-   * verbatim from GeminiProvider (gemini.provider.js:651). Used by
+   * language tag. Pure, provider-agnostic string normalization. Used by
    * generate/generateStream when a language is set.
    */
   enforceProgrammingLanguage(text, programmingLanguage) {
@@ -340,8 +340,7 @@ class LocalProvider extends LLMProvider {
 
   /**
    * Canned, model-availability-oriented fallback so the overlay never goes
-   * blank when Local is down. Mirrors GeminiProvider's shape; reused by the
-   * Local-down recovery UX (03-06).
+   * blank when Local is down. Reused by the Local-down recovery UX (03-06).
    */
   generateIntelligentFallbackResponse(text, activeSkill) {
     logger.info('Generating local-model-unavailable fallback response', { activeSkill });
@@ -381,8 +380,8 @@ class LocalProvider extends LLMProvider {
 
   /**
    * Local has no API key (apiKey:'ollama' is required-but-ignored). No-op that
-   * re-reads host/model and reconstructs the client, so the shared IPC path
-   * does not break during the Gemini→Local transition window.
+   * re-reads host/model and reconstructs the client, kept for compatibility with
+   * the shared provider IPC path.
    */
   updateApiKey(_newApiKey) {
     logger.info('Local provider has no API key; re-reading host/model from config');
@@ -390,8 +389,8 @@ class LocalProvider extends LLMProvider {
   }
 
   /**
-   * LOCAL health probe (repurposed from Gemini's TCP connectivity check).
-   * Probes the Ollama server (/api/version) and the model list (/v1/models),
+   * LOCAL health probe. Probes the Ollama server (/api/version) and the
+   * model list (/v1/models),
    * returning a { timestamp, tests: [...] } shape compatible with the
    * diagnostics consumer. Never throws.
    */

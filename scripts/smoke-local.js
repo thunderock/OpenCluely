@@ -402,7 +402,7 @@ async function main() {
 }
 
 // Guard execution so this module can be required side-effect-free (network-free
-// sanity checks of the pure helpers), mirroring capture-gemini-goldens.js.
+// sanity checks of the pure helpers).
 if (require.main === module) {
   main().catch((err) => {
     console.error('\nUnexpected error running the local smoke:');
