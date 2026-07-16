@@ -380,9 +380,7 @@ if (typeof window === 'undefined') {
 }
 
 const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const { EventEmitter } = require('events');
 const logger = require('../core/logger').createServiceLogger('SPEECH');
 const config = require('../core/config');
@@ -424,7 +422,10 @@ class SpeechService extends EventEmitter {
     this.pendingFlush = false;
     this.pendingFinal = false;
     this.audioProgram = null;
-    this.whisperCommand = null;
+    // Injected by main.js after the resident whisper-server is started (04-03).
+    // NEVER constructed here: the module export is a singleton and importing it
+    // (including in tests) must never spawn a server.
+    this.whisperServerManager = null;
     this._segmenter = new VadSegmenter();
     this._resetVadState();
 
@@ -436,7 +437,6 @@ class SpeechService extends EventEmitter {
     this.provider = 'disabled';
     this.available = false;
     this.speechConfig = null;
-    this.whisperCommand = null;
 
     const provider = this._getConfiguredProvider();
     this.provider = provider;
@@ -509,31 +509,89 @@ class SpeechService extends EventEmitter {
     }
   }
 
+  /**
+   * Inject the started resident whisper-server manager (04-03, STT-01/SC1).
+   * main.js hands the singleton in after app.whenReady() →
+   * getWhisperServerManager().start(), so the flush seam transcribes against
+   * the RESIDENT engine (no per-utterance spawn). Re-evaluates availability +
+   * status the moment it lands — the constructor ran at import time, before any
+   * manager existed. NEVER constructs a manager here (tests must not spawn).
+   */
+  setWhisperServerManager(manager) {
+    this.whisperServerManager = manager || null;
+    if (this.provider === 'whisper') {
+      this._initializeWhisperClient();
+    }
+  }
+
   _initializeWhisperClient() {
     try {
-      this.whisperCommand = this._resolveWhisperCommand();
-      if (!this.whisperCommand) {
-        const reason = 'Local Whisper unavailable. Install the Whisper CLI or set WHISPER_COMMAND.';
-        logger.warn(reason);
-        this.emit('status', reason);
+      // The resident engine IS the whisper provider now (no Python CLI). Read
+      // its three health levels and surface three distinct inline messages
+      // (Pitfall 4): binary → model → server up. Availability requires the
+      // server up AND the model on disk.
+      const health = this._whisperResidentHealth();
+      this.available = false;
+
+      if (!this.whisperServerManager) {
+        // Injected by main.js after app-ready start(); until then the resident
+        // engine simply isn't ready. Not an error — degrade quietly.
+        this.emit('status', 'Voice engine initializing…');
+        return;
+      }
+      if (!health.binaryPresent) {
+        this.emit('status', 'Voice engine unavailable — build the whisper-server binary');
+        return;
+      }
+      if (!health.modelPresent) {
+        this.emit('status', 'Voice model missing — download the voice model');
+        return;
+      }
+      if (!health.serverUp) {
+        this.emit('status', 'Voice engine down — retry');
         return;
       }
 
       this.available = true;
-      logger.info('Local Whisper service initialized successfully', {
-        command: [this.whisperCommand.command, ...this.whisperCommand.baseArgs].join(' '),
+      logger.info('Resident Whisper engine ready', {
         model: this._getWhisperModel(),
-        language: this._getWhisperLanguage()
+        language: this._getWhisperLanguage(),
       });
       this.emit('status', 'Local Whisper ready');
     } catch (error) {
-      logger.error('Failed to initialize local Whisper client', {
+      logger.error('Failed to initialize resident Whisper client', {
         error: error.message,
-        stack: error.stack
+        stack: error.stack,
       });
       this.available = false;
       this.emit('status', 'Local Whisper unavailable');
     }
+  }
+
+  /**
+   * Synchronous three-level health of the injected resident whisper-server,
+   * read straight off the manager's sync surface (resolved binary path,
+   * on-disk model, supervisor lifecycle state) so isAvailable()/getStatus()
+   * stay synchronous. The level-4 responding probe is async and used only by
+   * testConnection().
+   */
+  _whisperResidentHealth() {
+    const mgr = this.whisperServerManager;
+    if (!mgr) {
+      return { binaryPresent: false, modelPresent: false, serverUp: false };
+    }
+    let binaryPresent = false;
+    let modelPresent = false;
+    let serverUp = false;
+    try { binaryPresent = !!mgr.binaryPath; } catch (_) { binaryPresent = false; }
+    try { modelPresent = typeof mgr.modelPresent === 'function' ? !!mgr.modelPresent() : false; } catch (_) { modelPresent = false; }
+    try {
+      const s = mgr.supervisor && typeof mgr.supervisor.getStatus === 'function'
+        ? mgr.supervisor.getStatus()
+        : null;
+      serverUp = !!s && (s.state === 'healthy' || s.state === 'adopted');
+    } catch (_) { serverUp = false; }
+    return { binaryPresent, modelPresent, serverUp };
   }
 
   startRecording() {
@@ -991,7 +1049,17 @@ class SpeechService extends EventEmitter {
     }
 
     if (this.provider === 'whisper') {
-      return this._transcribeWhisperFile(audioFilePath);
+      const mgr = this.whisperServerManager;
+      if (!mgr || typeof mgr.transcribe !== 'function') {
+        throw new Error('Resident Whisper engine not initialized');
+      }
+      if (!fs.existsSync(audioFilePath)) {
+        throw new Error(`Audio file not found: ${audioFilePath}`);
+      }
+      const result = await mgr.transcribe(fs.readFileSync(audioFilePath), {
+        language: this._getWhisperLanguage(),
+      });
+      return result && typeof result.text === 'string' ? result.text : '';
     }
 
     throw new Error('Speech service not initialized');
@@ -1015,44 +1083,50 @@ class SpeechService extends EventEmitter {
     }
 
     if (this.provider === 'whisper') {
-      if (!this.whisperCommand) {
-        return { success: false, message: 'Local Whisper CLI not found' };
+      const mgr = this.whisperServerManager;
+      if (!mgr) {
+        return { success: false, message: 'Resident voice engine not initialized' };
       }
-      // Actually probe the executable to confirm it works
-      const probe = spawnSync(
-        this.whisperCommand.command,
-        [...this.whisperCommand.baseArgs, '--help'],
-        { encoding: 'utf8', timeout: 10000 }
-      );
-      if (probe.error || probe.status !== 0) {
-        const err = probe.error ? probe.error.message : `exit code ${probe.status}`;
-        return {
-          success: false,
-          message: `Local Whisper CLI detected but probe failed: ${err}`
-        };
+      try {
+        // Level-4 responding probe (the only async health level): confirms the
+        // resident server actually answers, not just that its port is open.
+        const st = await mgr.getStatus({ probeResponding: true });
+        if (!st.binaryPresent) {
+          return { success: false, message: 'Voice engine binary not found — build the whisper-server first' };
+        }
+        if (!st.modelPresent) {
+          return { success: false, message: 'Voice model not downloaded yet' };
+        }
+        if (!st.serverUp) {
+          return { success: false, message: 'Voice engine is not running' };
+        }
+        if (!st.responding) {
+          return { success: false, message: 'Voice engine is running but not responding' };
+        }
+        return { success: true, message: 'Local voice engine is responding' };
+      } catch (error) {
+        return { success: false, message: error.message };
       }
-      return {
-        success: true,
-        message: `Local Whisper CLI works: ${this.whisperCommand.command}`
-      };
     }
 
     return { success: false, message: 'Speech service not initialized' };
   }
 
   getStatus() {
+    const whisperHealth = this._whisperResidentHealth();
     return {
       provider: this.provider,
       isRecording: this.isRecording,
-      isInitialized: this.provider === 'azure' ? !!this.speechConfig : !!this.whisperCommand,
+      isInitialized: this.provider === 'azure' ? !!this.speechConfig : !!this.whisperServerManager,
       sessionDuration: this.sessionStartTime ? Date.now() - this.sessionStartTime : 0,
       retryCount: this.retryCount,
+      // Three-level resident-engine health (binary / model / server up) so the
+      // overlay + settings can surface three distinct voice messages (Pitfall 4).
+      whisperHealth,
       effectiveSettings: {
         speechProvider: this.provider,
         azureKey: this._getSetting('azureKey') || '',
         azureRegion: this._getSetting('azureRegion') || process.env.AZURE_SPEECH_REGION || '',
-        whisperCommand: this._getSetting('whisperCommand') || process.env.WHISPER_COMMAND || '',
-        whisperModelDir: this._getWhisperModelDir(),
         whisperModel: this._getWhisperModel(),
         whisperLanguage: this._getWhisperLanguage(),
         whisperSegmentMs: String(this._getWhisperSegmentMs())
@@ -1071,7 +1145,12 @@ class SpeechService extends EventEmitter {
     }
 
     if (this.provider === 'whisper') {
-      return !!this.whisperCommand && !!this.available;
+      // Live three-level check: the resident engine is usable only when its
+      // server is up AND the model is on disk. Recomputed each call so a
+      // mid-session engine-down flips availability off → the overlay shows
+      // "voice unavailable" + retry. Typing + screenshot are unaffected.
+      const health = this._whisperResidentHealth();
+      return !!(health.serverUp && health.modelPresent);
     }
 
     return false;
@@ -1113,32 +1192,8 @@ class SpeechService extends EventEmitter {
   }
 
   _getWhisperModel() {
-    return this._getSetting('whisperModel') || process.env.WHISPER_MODEL || config.get('speech.whisper.model') || 'turbo';
-  }
-
-  _getWhisperModelDir() {
-    const configured = this._getSetting('whisperModelDir') || process.env.WHISPER_MODEL_DIR || '';
-    // Honor an absolute configured dir. Empty or relative values (the old
-    // `.whisper-models` default resolved against an unstable cwd) are replaced
-    // with the stable userData location the installer downloads weights into,
-    // so --model_dir and download_root always agree.
-    if (configured && path.isAbsolute(configured)) {
-      return configured;
-    }
-    return this._getUserDataModelDir() || configured;
-  }
-
-  /**
-   * Absolute model-weights dir under Electron userData — matches
-   * WhisperInstaller.modelDir so transcription finds downloaded models.
-   */
-  _getUserDataModelDir() {
-    try {
-      const { app } = require('electron');
-      return path.join(app.getPath('userData'), '.whisper-models');
-    } catch (_) {
-      return '';
-    }
+    // Default collapsed to the resident engine's ggml model (was Python 'turbo').
+    return this._getSetting('whisperModel') || process.env.WHISPER_MODEL || config.get('speech.whisper.model') || 'small.en';
   }
 
   _getWhisperLanguage() {
@@ -1190,260 +1245,6 @@ class SpeechService extends EventEmitter {
   _getSetting(key) {
     const value = this.runtimeSettings[key];
     return value === '' ? null : value;
-  }
-
-  /**
-   * Build a whisper candidate pointing at the app-local venv inside
-   * Electron's userData directory. This is where the onboarding installer
-   * creates the venv in packaged builds.
-   */
-  _getUserDataWhisperCandidate() {
-    try {
-      const { app } = require('electron');
-      const userData = app.getPath('userData');
-      const binDir = process.platform === 'win32' ? 'Scripts' : 'bin';
-      const ext = process.platform === 'win32' ? '.exe' : '';
-      const python = path.join(userData, '.venv-whisper', binDir, `python${ext}`);
-      if (fs.existsSync(python)) {
-        return { command: python, baseArgs: ['-m', 'whisper'] };
-      }
-    } catch (_) {
-      // electron may not be available in unit tests
-    }
-    return null;
-  }
-
-  _resolveWhisperCommand() {
-    const configured = this._getSetting('whisperCommand') || process.env.WHISPER_COMMAND;
-    const candidates = [];
-
-    if (configured) {
-      candidates.push(...this._expandConfiguredWhisperCandidates(configured));
-    }
-
-    // Persistent app venv (highest priority after explicit config)
-    const userDataVenv = this._getUserDataWhisperCandidate();
-    if (userDataVenv) {
-      candidates.push({ ...userDataVenv, source: 'app userData venv' });
-    }
-
-    // Platform-aware fallback candidates (higher priority = tried first)
-    candidates.push({ command: 'whisper', baseArgs: [], source: 'system PATH' });
-    if (process.platform === 'win32') {
-      candidates.push({ command: 'whisper.exe', baseArgs: [], source: 'system PATH (exe)' });
-      candidates.push({ command: 'py', baseArgs: ['-3', '-m', 'whisper'], source: 'py launcher' });
-    }
-    candidates.push({ command: 'python3', baseArgs: ['-m', 'whisper'], source: 'python3 module' });
-    candidates.push({ command: 'python', baseArgs: ['-m', 'whisper'], source: 'python module' });
-
-    for (const candidate of candidates) {
-      if (!candidate || !candidate.command) {
-        continue;
-      }
-
-      const resolved = this._probeWhisperCandidate(candidate);
-      if (resolved) {
-        logger.info('Whisper command resolved', {
-          command: resolved.command,
-          baseArgs: resolved.baseArgs,
-          source: resolved.source || candidate.source || 'unknown'
-        });
-        return resolved;
-      }
-    }
-
-    logger.warn('No Whisper CLI candidate succeeded after probing all fallbacks');
-    return null;
-  }
-
-  /**
-   * Fast, torch-free check for python `-m whisper` candidates. Importing the
-   * whisper package pulls in torch/numba and can take well over 8 s on a cold
-   * cache (first run after install), which made `--help` time out and the mic
-   * button stay hidden until a second launch. `importlib.util.find_spec`
-   * confirms the module is installed without importing it, returning in well
-   * under a second. Returns the candidate on success, else null.
-   */
-  _probeWhisperModuleFast(candidate) {
-    const mIdx = candidate.baseArgs.indexOf('-m');
-    if (mIdx === -1 || candidate.baseArgs[mIdx + 1] !== 'whisper') {
-      return null; // not a `-m whisper` form (e.g. a whisper binary)
-    }
-    const pyArgs = candidate.baseArgs.slice(0, mIdx);
-    const script = 'import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("whisper") else 1)';
-    try {
-      // No shell: an absolute .exe runs directly. shell:true on Windows does
-      // NOT quote args, so a spaced path like
-      //   C:\Users\CANDAN SINGH\...\python.exe
-      // would be split at the space and the probe would wrongly fail —
-      // hiding the mic for any user whose profile name contains a space.
-      const probe = spawnSync(candidate.command, [...pyArgs, '-c', script], {
-        encoding: 'utf8',
-        timeout: 8000,
-        windowsHide: true,
-      });
-      if (!probe.error && probe.status === 0) {
-        return candidate;
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
-  /**
-   * Probe a single candidate: exists check → fast module check → spawn --help.
-   * Returns the working candidate object, or null on failure.
-   */
-  _probeWhisperCandidate(candidate) {
-    const cmd = candidate.command;
-    const args = [...candidate.baseArgs, '--help'];
-
-    // Fast path: skip spawnSync if the file clearly doesn't exist
-    if (path.isAbsolute(cmd) || cmd.includes(path.sep) || cmd.includes('/')) {
-      try {
-        const normalized = path.normalize(cmd);
-        if (!fs.existsSync(normalized)) {
-          logger.debug('Whisper probe skipped: file does not exist', {
-            command: cmd,
-            normalized
-          });
-          return null;
-        }
-      } catch (e) {
-        // fs.existsSync can throw on invalid paths; treat as missing
-        return null;
-      }
-    }
-
-    // Cheap torch-free check first so the mic appears on the first run.
-    const fast = this._probeWhisperModuleFast(candidate);
-    if (fast) {
-      logger.debug('Whisper module confirmed via find_spec', { command: cmd });
-      return fast;
-    }
-
-    let probe;
-    try {
-      probe = spawnSync(cmd, args, {
-        encoding: 'utf8',
-        // First `import whisper` (torch/numba) can be slow on a cold cache.
-        timeout: 30000,
-        windowsHide: true,
-        // No shell — see _probeWhisperModuleFast: shell:true on Windows splits
-        // spaced paths (e.g. "C:\Users\CANDAN SINGH\...") and breaks the probe.
-      });
-    } catch (spawnErr) {
-      logger.debug('Whisper probe spawn error', {
-        command: cmd,
-        error: spawnErr.message
-      });
-      return null;
-    }
-
-    const output = `${probe.stdout || ''}\n${probe.stderr || ''}`;
-    const noModule = output.includes('No module named whisper');
-    const isHelpOutput = output.includes('usage:') || output.includes('whisper') || output.includes('options');
-
-    if (!probe.error && probe.status === 0 && !noModule) {
-      return candidate;
-    }
-
-    // Some whisper builds exit with non-zero on --help but still print usage
-    if (!probe.error && !noModule && isHelpOutput) {
-      logger.debug('Whisper probe accepted non-zero help output', {
-        command: cmd,
-        status: probe.status
-      });
-      return candidate;
-    }
-
-    logger.debug('Whisper probe failed', {
-      command: cmd,
-      status: probe.status,
-      error: probe.error ? probe.error.message : null,
-      noModule,
-      isHelpOutput,
-      outputPreview: output.substring(0, 200)
-    });
-    return null;
-  }
-
-  _expandConfiguredWhisperCandidates(rawCommand) {
-    const parsed = this._parseCommand(rawCommand);
-    if (!parsed) {
-      return [];
-    }
-
-    const candidates = [];
-    // Normalize forward slashes to platform separator before trying anything
-    const normalizedCmd = path.normalize(parsed.command);
-
-    candidates.push({
-      command: normalizedCmd,
-      baseArgs: parsed.baseArgs,
-      source: 'configured (normalized)'
-    });
-
-    const resolvedPath = path.resolve(normalizedCmd);
-    if (resolvedPath !== normalizedCmd) {
-      candidates.push({
-        command: resolvedPath,
-        baseArgs: parsed.baseArgs,
-        source: 'configured (resolved)'
-      });
-    }
-
-    if (process.platform === 'win32') {
-      const base = normalizedCmd;
-      // Try .exe / .cmd / .bat variants when extension is missing
-      if (!/\.(exe|cmd|bat)$/i.test(base)) {
-        candidates.push({ command: `${base}.exe`, baseArgs: parsed.baseArgs, source: 'configured (.exe)' });
-        candidates.push({ command: `${base}.cmd`, baseArgs: parsed.baseArgs, source: 'configured (.cmd)' });
-        if (resolvedPath !== base) {
-          candidates.push({ command: `${resolvedPath}.exe`, baseArgs: parsed.baseArgs, source: 'configured (resolved .exe)' });
-        }
-      }
-      // Some Windows venvs create whisper-script.py alongside whisper.exe
-      const scriptPath = base + '-script.py';
-      candidates.push({ command: 'python', baseArgs: [scriptPath, ...parsed.baseArgs], source: 'configured (script.py)' });
-      // Try using the venv's own python with -m whisper
-      const venvPython = path.join(path.dirname(base), 'python.exe');
-      if (fs.existsSync(venvPython)) {
-        candidates.push({ command: venvPython, baseArgs: ['-m', 'whisper', ...parsed.baseArgs], source: 'configured (venv python -m whisper)' });
-      }
-    } else {
-      // On Unix, try the directory's python3 with -m whisper if the configured path looks like a venv entry point
-      const venvPython3 = path.join(path.dirname(normalizedCmd), 'python3');
-      if (fs.existsSync(venvPython3)) {
-        candidates.push({ command: venvPython3, baseArgs: ['-m', 'whisper', ...parsed.baseArgs], source: 'configured (venv python3 -m whisper)' });
-      }
-      const venvPython = path.join(path.dirname(normalizedCmd), 'python');
-      if (fs.existsSync(venvPython)) {
-        candidates.push({ command: venvPython, baseArgs: ['-m', 'whisper', ...parsed.baseArgs], source: 'configured (venv python -m whisper)' });
-      }
-    }
-
-    return candidates;
-  }
-
-  _parseCommand(rawCommand) {
-    // Respect double-quoted segments so Windows userData paths like
-    // "C:\Users\CANDAN SINGH\...\python.exe" survive intact.
-    const trimmed = String(rawCommand || '').trim();
-    if (!trimmed) {
-      return null;
-    }
-    const parts = trimmed.match(/(?:[^\s"]+|"[^"]*")+/g) || [trimmed];
-    const normalized = parts.map((p) => p.replace(/^"|"$/g, '')).filter(Boolean);
-    if (normalized.length === 0) {
-      return null;
-    }
-
-    return {
-      command: normalized[0],
-      baseArgs: normalized.slice(1)
-    };
   }
 
   _startMicrophoneCapture() {
@@ -1615,8 +1416,24 @@ class SpeechService extends EventEmitter {
     this.transcriptionInFlight = true;
 
     try {
-      const transcript = await this._transcribeWhisperBuffer(audioBuffer);
+      // STT-01/SC1: transcribe against the RESIDENT whisper-server — no
+      // per-utterance process/model spawn, no cold-start. Build the 16 kHz mono
+      // WAV and POST it through the injected manager (/inference verbose_json,
+      // which drops no_speech_prob > 0.6 segments — the SECOND of the three
+      // gates). Engine-down degrades to '' (no crash); there is NO Python
+      // fallback (that path is deleted).
+      let transcript = '';
+      const mgr = this.whisperServerManager;
+      if (mgr && typeof mgr.transcribe === 'function') {
+        const wav = this._createWavBuffer(audioBuffer);
+        const result = await mgr.transcribe(wav, { language: this._getWhisperLanguage() });
+        transcript = result && typeof result.text === 'string' ? result.text : '';
+      } else {
+        logger.warn('Resident Whisper engine unavailable; dropping segment (no fallback)');
+      }
       const clean = transcript ? transcript.trim() : '';
+      // THIRD gate: the phrase-list hallucination filter still guards
+      // emit('transcription') (VAD segmenter → no_speech_prob>0.6 → this).
       if (clean && !this._isHallucinatedTranscript(clean)) {
         this.emit('transcription', clean);
       } else if (clean) {
@@ -1664,76 +1481,6 @@ class SpeechService extends EventEmitter {
     return HALLUCINATIONS.has(normalized);
   }
 
-  async _transcribeWhisperBuffer(audioBuffer) {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencluely-whisper-'));
-    const audioFilePath = path.join(tempDir, 'segment.wav');
-
-    try {
-      fs.writeFileSync(audioFilePath, this._createWavBuffer(audioBuffer));
-      return await this._transcribeWhisperFile(audioFilePath);
-    } finally {
-      this._removeTempDir(tempDir);
-    }
-  }
-
-  async _transcribeWhisperFile(audioFilePath) {
-    if (!this.whisperCommand) {
-      throw new Error('Local Whisper CLI not configured');
-    }
-
-    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencluely-whisper-out-'));
-    const args = [
-      ...this.whisperCommand.baseArgs,
-      audioFilePath,
-      '--model', this._getWhisperModel(),
-      '--language', this._getWhisperLanguage(),
-      '--task', 'transcribe',
-      '--output_format', 'txt',
-      '--output_dir', outputDir,
-      '--verbose', 'False',
-      '--fp16', 'False'
-    ];
-
-    if (this._getWhisperModelDir()) {
-      args.push('--model_dir', this._getWhisperModelDir());
-    }
-
-    try {
-      await new Promise((resolve, reject) => {
-        const child = spawn(this.whisperCommand.command, args, {
-          stdio: ['ignore', 'pipe', 'pipe']
-        });
-
-        let stderr = '';
-        child.stderr.on('data', (chunk) => {
-          stderr += chunk.toString();
-        });
-
-        child.on('error', (error) => {
-          reject(error);
-        });
-
-        child.on('close', (code) => {
-          if (code === 0) {
-            resolve();
-            return;
-          }
-
-          reject(new Error(stderr.trim() || `Whisper exited with code ${code}`));
-        });
-      });
-
-      const transcriptPath = path.join(outputDir, `${path.parse(audioFilePath).name}.txt`);
-      if (!fs.existsSync(transcriptPath)) {
-        return '';
-      }
-
-      return fs.readFileSync(transcriptPath, 'utf8').trim();
-    } finally {
-      this._removeTempDir(outputDir);
-    }
-  }
-
   _createWavBuffer(rawPcmBuffer) {
     const header = Buffer.alloc(44);
     const sampleRate = 16000;
@@ -1757,17 +1504,6 @@ class SpeechService extends EventEmitter {
     header.writeUInt32LE(rawPcmBuffer.length, 40);
 
     return Buffer.concat([header, rawPcmBuffer]);
-  }
-
-  _removeTempDir(tempDir) {
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch (error) {
-      logger.error('Failed to remove Whisper temp directory', {
-        tempDir,
-        error: error.message
-      });
-    }
   }
 }
 
