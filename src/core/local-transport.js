@@ -1,45 +1,21 @@
 /**
- * Local-engine transport primitives — robustness against the Azure STT
- * browser-DOM polyfill (ollama-not-detected, deeper root cause).
+ * Local-engine transport primitive: a Node-http-backed `fetch`.
  *
- * speech.service.js installs an Azure Speech SDK browser-DOM shim at process
- * startup (required from main.js top-level). That shim CLOBBERS a set of Node
- * globals; two of them break the local (Ollama) engine:
+ * In the Electron MAIN process the ambient global `fetch` is Chromium-net-backed
+ * and FALSE-NEGATIVES the loopback Ollama daemon that Node's http reaches fine
+ * (the same gotcha ServiceSupervisor sidesteps with a Node-http probe). So we
+ * hand every client (openai SDK, ollama client) a Node-http `fetch` instead of
+ * the ambient one. This is independent of any speech code — it exists purely to
+ * make loopback requests reliable in the Electron main process.
  *
- *   1. global.URL → a fake class that parses EVERY input to
- *      { hostname:'localhost', port:'', protocol:'https:' } and has NO
- *      `searchParams` (speech.service.js:293-308). This silently mis-targets
- *      every `new URL()` in the process: our _probeVersion (probe hits
- *      localhost:443, not 127.0.0.1:11434), the openai SDK's internal buildURL
- *      (`Object.fromEntries(url.searchParams)` throws), and the ollama client's
- *      formatHost (host becomes `https://localhost:443…`). The real Node URL is
- *      a full WHATWG superset; the shim's constant-garbage output cannot be
- *      relied on for correctness, so restoring the native URL is SAFE for Azure
- *      and repairs every downstream consumer at once.
- *
- *   2. the ambient fetch → in the Electron MAIN process the global fetch is
- *      Chromium-net-backed and FALSE-NEGATIVES the loopback Ollama daemon that
- *      Node's http reaches fine (the same gotcha ServiceSupervisor already
- *      sidesteps with a Node-http probe). So we hand every client a Node-http
- *      `fetch` instead of the ambient one.
- *
- * We do NOT remove the polyfill (Phase 4 / STT-05 owns that) — we make the
- * local engine robust against it.
+ * The native `node:url` URL is captured here (independent of the global) so host
+ * parsing is always correct regardless of what else is on `globalThis`.
  */
 
 const http = require('node:http');
 const https = require('node:https');
-const { ReadableStream } = require('node:stream/web'); // native web stream, captured independent of any polyfill
-const { URL } = require('node:url'); // native, captured independent of the (poisoned) global URL
-
-// Idempotent: restore the native global URL when the polyfill has clobbered it.
-// A no-op when unpolluted (globalThis.URL === node:url URL). Best-effort: a
-// frozen/non-writable global still leaves our own captured `URL` usable.
-function ensureNativeGlobalURL() {
-  try {
-    if (globalThis.URL !== URL) globalThis.URL = URL;
-  } catch (_) { /* best-effort */ }
-}
+const { ReadableStream } = require('node:stream/web'); // native web stream
+const { URL } = require('node:url'); // native URL, captured independent of the global
 
 // Flatten any header container (WHATWG Headers, Map, entries array, plain
 // object) to the plain object node:http expects. The openai SDK passes a
@@ -64,8 +40,8 @@ function abortError() {
 
 /**
  * A WHATWG-`fetch`-shaped function backed by Node's http/https so it reaches
- * the loopback daemon regardless of the ambient (Chromium-net / polyfilled)
- * fetch. Returns a native Response with a web ReadableStream body — supports
+ * the loopback daemon regardless of the ambient (Chromium-net-backed) fetch in
+ * the Electron main process. Returns a native Response with a web ReadableStream body — supports
  * both the openai SDK (.json(), streamed `.body.getReader()`) and the ollama
  * client (list/pull/generate). Honors init.method/headers/body/signal.
  */
@@ -74,7 +50,7 @@ function nodeFetch(input, init = {}) {
     let u;
     try {
       const urlStr = typeof input === 'string' ? input : (input && input.url) || String(input);
-      u = new URL(urlStr); // native URL — immune to the poisoned global
+      u = new URL(urlStr); // native URL — correct host parsing regardless of the global
     } catch (e) {
       reject(e);
       return;
@@ -141,4 +117,4 @@ function nodeFetch(input, init = {}) {
   });
 }
 
-module.exports = { URL, ensureNativeGlobalURL, nodeFetch, normalizeHeaders };
+module.exports = { URL, nodeFetch, normalizeHeaders };

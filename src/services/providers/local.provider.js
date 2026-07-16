@@ -19,7 +19,7 @@ const OpenAI = require('openai');
 const config = require('../../core/config');
 const { LLMProvider } = require('./llm-provider');
 const { RequestBuilder } = require('../../core/request-builder');
-const { ensureNativeGlobalURL, nodeFetch } = require('../../core/local-transport');
+const { nodeFetch } = require('../../core/local-transport');
 const logger = require('../../core/logger').createServiceLogger('LOCAL');
 
 class LocalProvider extends LLMProvider {
@@ -53,17 +53,11 @@ class LocalProvider extends LLMProvider {
     this.keepAlive = local.keepAlive != null ? local.keepAlive : this.keepAlive;
     this.think = local.think === true; // re-read so a settings change takes effect on relaunch
 
-    // The Azure STT browser-DOM polyfill (speech.service.js, required at main.js
-    // startup) poisons global.URL with a fake that has no `searchParams` — which
-    // the openai SDK's internal buildURL relies on (Object.fromEntries(
-    // url.searchParams)). Restore the native global URL before constructing the
-    // client (idempotent no-op when unpolluted; see local-transport.js).
-    ensureNativeGlobalURL();
-
     try {
-      // - dangerouslyAllowBrowser: the same polyfill sets window+document+navigator,
-      //   which trips the SDK's browser guard in the Electron MAIN process; we are
-      //   not actually in a browser, so the guard is a false positive here.
+      // - dangerouslyAllowBrowser: harmless/defensive — if any code ever puts a
+      //   window/document/navigator triad on the global, the SDK's browser guard
+      //   would false-positive in the Electron MAIN process; we are not actually
+      //   in a browser, so allowing it is safe here.
       // - fetch: nodeFetch forces a Node-http transport so requests reach the
       //   loopback daemon; the ambient Electron main fetch (Chromium-net) false-
       //   negatives loopback.

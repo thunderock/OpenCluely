@@ -23,7 +23,7 @@ const path = require('path');
 const http = require('node:http');
 const https = require('node:https');
 const crypto = require('crypto');
-const { URL } = require('node:url'); // native URL, immune to the Azure polyfill poisoning global.URL
+const { URL } = require('node:url'); // native URL for correct host parsing regardless of the global
 
 // HF *model* repo — still `ggerganov/whisper.cpp` even though the GitHub org
 // renamed to `ggml-org` (`ggml-org/whisper.cpp` on HF returns 401). Files live at

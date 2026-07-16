@@ -30,7 +30,7 @@ const path = require('node:path');
 const net = require('node:net');
 const crypto = require('node:crypto');
 const ServiceSupervisor = require('./service-supervisor');
-const { ensureNativeGlobalURL, nodeFetch } = require('./local-transport');
+const { nodeFetch } = require('./local-transport');
 
 // ── Mach-O verification (arm64/x64 guard, mirrors the openwhispr arch-verify /
 // LocalModelManager binary-trust pattern). Kept here for runtime resolution;
@@ -74,11 +74,6 @@ function clampThreads(cores) {
 
 class WhisperServerManager {
   constructor({ supervisor, spawn, config, logger, fetchImpl } = {}) {
-    // The Azure STT browser-DOM polyfill (speech.service.js, required at main.js
-    // startup) clobbers global.URL; restore the native one before any transport
-    // is built. Idempotent no-op when unpolluted (see local-transport.js).
-    ensureNativeGlobalURL();
-
     this.config = config || require('./config');
     const w = this.config.get('speech.whisper') || {};
     this.host = w.host || '127.0.0.1';
