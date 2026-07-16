@@ -2,6 +2,10 @@ node_modules/
 .env
 .venv-whisper/
 .whisper-models/
+# whisper-server build artifacts (compiled in dev; Phase 8 owns packaging).
+# Source helpers under resources/ (e.g. resources/mac/*.swift) stay tracked.
+resources/bin/
+resources/.whisper-cpp-src/
 eng.traineddata
 dist/
 .DS_Store
