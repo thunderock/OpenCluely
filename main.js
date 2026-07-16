@@ -128,6 +128,9 @@ class ApplicationController {
     // Local engine lifecycle (PROV-05) — lazily-initialised in
     // getLocalModelManager() so it never runs during import/tests.
     this._localModelManager = null;
+    // macOS system-audio tap (STT-04) — lazily-initialised in
+    // getSystemAudioTapManager() so importing/tests never spawn the helper.
+    this._systemAudioTapManager = null;
     this.isFirstRun = false;
 
     // Window configurations for reference
@@ -334,6 +337,50 @@ class ApplicationController {
         }
       } catch (e) {
         logger.warn("Failed to inject whisper manager into speech service", {
+          error: e.message,
+        });
+      }
+
+      // macOS system-audio tap (STT-04/SC4): capture the OTHER party's audio as a
+      // separate source:'system' channel. Sits behind isSupported() (darwin &&
+      // >=14.4) -> consent -> degrade-to-mic, so any failure just leaves the
+      // system channel OFF and mic-only ambient listening (the guaranteed
+      // baseline) keeps working. NON-BLOCKING + NON-FATAL, like the whisper/local
+      // starts above. The tap's 16 kHz PCM feeds speechService.handleSystemAudioChunk;
+      // setSystemChannelEnabled gates the second pipeline. NOTE (04-RESEARCH Flag 3):
+      // the NSAudioCaptureUsageDescription TCC prompt does not fire on unsigned
+      // builds — the 04-05 signing spike + Phase 8 signing gate whether this is
+      // actually live in the shipped app.
+      try {
+        const tap = this.getSystemAudioTapManager();
+        if (!tap.isSupported()) {
+          logger.info(
+            "System audio tap not supported on this OS (needs macOS 14.4+) — microphone only",
+          );
+        } else if (typeof speechService.handleSystemAudioChunk !== "function") {
+          logger.info("Speech service has no system-audio channel — microphone only");
+        } else {
+          const tapStatus = await tap.start({
+            onPcm: (buf) => speechService.handleSystemAudioChunk(buf),
+          });
+          const live = !!(tapStatus && tapStatus.running && tapStatus.granted);
+          if (typeof speechService.setSystemChannelEnabled === "function") {
+            speechService.setSystemChannelEnabled(live);
+          }
+          if (live) {
+            logger.info(
+              "System audio tap live — capturing the other party's audio",
+              tapStatus,
+            );
+          } else {
+            logger.info(
+              "System audio unavailable — using microphone only (degrade-to-mic)",
+              tapStatus,
+            );
+          }
+        }
+      } catch (e) {
+        logger.warn("System audio tap start failed (continuing mic-only)", {
           error: e.message,
         });
       }
@@ -1614,6 +1661,13 @@ class ApplicationController {
       if (stoppingWhisper && typeof stoppingWhisper.catch === "function") stoppingWhisper.catch(() => {});
     } catch (_) { /* best effort */ }
 
+    // SIGTERM the system-audio tap helper we spawned (own-only; never lingers
+    // after quit). Fire-and-forget — quit must not wait on it.
+    try {
+      const stoppingTap = this.getSystemAudioTapManager().stop();
+      if (stoppingTap && typeof stoppingTap.catch === "function") stoppingTap.catch(() => {});
+    } catch (_) { /* best effort */ }
+
     const sessionStats = sessionManager.getMemoryUsage();
     logger.info("Application shutting down", {
       sessionEvents: sessionStats.eventCount,
@@ -1651,6 +1705,19 @@ class ApplicationController {
       this._localModelManager = new LocalModelManager();
     }
     return this._localModelManager;
+  }
+
+  // macOS system-audio tap (STT-04): spawns the Core Audio Process Tap helper,
+  // parses its stderr status, persists grant/deny, and pipes 16 kHz PCM into the
+  // speech service's system channel. Everything sits behind isSupported() (darwin
+  // && >=14.4) + consent + a uniform degrade-to-mic path. Lazily constructed so
+  // import-time and tests never spawn the helper.
+  getSystemAudioTapManager() {
+    if (!this._systemAudioTapManager) {
+      const SystemAudioTapManager = require("./src/core/system-audio-tap.manager");
+      this._systemAudioTapManager = new SystemAudioTapManager();
+    }
+    return this._systemAudioTapManager;
   }
 
   getSettings() {
