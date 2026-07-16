@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Set C++ as default if no coding language is specified
         if (codingLanguageSelect) {
-            codingLanguageSelect.value = settings.codingLanguage || 'cpp';
+            codingLanguageSelect.value = settings.codingLanguage || 'python';
         }
 
         if (settings.activeSkill && activeSkillSelect) activeSkillSelect.value = settings.activeSkill;

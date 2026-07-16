@@ -10,7 +10,7 @@ class MainWindowUI {
     constructor() {
         this.isInteractive = false;
         this.isHidden = false;
-        this.currentSkill = 'dsa'; // Default, will be updated from settings
+        this.currentSkill = 'general'; // Default, will be updated from settings
         this.statusDot = null;
         this.skillIndicator = null;
         this.micButton = null;
@@ -27,7 +27,8 @@ class MainWindowUI {
         
         // Define available skills for navigation
         this.availableSkills = [
-            'dsa'
+            'general',
+            'programming'
         ];
         
         this.init();
@@ -290,10 +291,11 @@ class MainWindowUI {
             }
         });
 
-        // Skill indicator click handler toggles DSA skill
+        // Skill indicator click handler cycles through the available skills
         this.skillIndicator.addEventListener('click', () => {
             if (!this.isInteractive) return;
-            const newSkill = 'dsa';
+            const currentIndex = this.availableSkills.indexOf(this.currentSkill);
+            const newSkill = this.availableSkills[(currentIndex + 1) % this.availableSkills.length];
             if (window.electronAPI && window.electronAPI.updateActiveSkill) {
                 window.electronAPI.updateActiveSkill(newSkill).then(() => {
                     this.handleSkillActivated(newSkill);
@@ -340,22 +342,22 @@ class MainWindowUI {
         // Language dropdown
         this.languageSelect = document.getElementById('codingLanguage');
         if (this.languageSelect) {
-            // Set default to C++ if no value is set
-            this.languageSelect.value = 'cpp';
-            
+            // Set default to Python if no value is set
+            this.languageSelect.value = 'python';
+
             // Initialize with current setting
             if (window.electronAPI && window.electronAPI.getSettings) {
                 window.electronAPI.getSettings().then(settings => {
                     if (settings && settings.codingLanguage) {
                         this.languageSelect.value = settings.codingLanguage;
                     } else {
-                        // Save C++ as default if no language is set
-                        this.languageSelect.value = 'cpp';
-                        window.electronAPI.saveSettings({ codingLanguage: 'cpp' });
+                        // Save Python as default if no language is set
+                        this.languageSelect.value = 'python';
+                        window.electronAPI.saveSettings({ codingLanguage: 'python' });
                     }
                 }).catch(() => {
-                    // Fallback to C++ on error
-                    this.languageSelect.value = 'cpp';
+                    // Fallback to Python on error
+                    this.languageSelect.value = 'python';
                 });
             }
 
@@ -547,6 +549,7 @@ class MainWindowUI {
     handleLLMResponse(data) {
         const skill = data.skill || data.metadata?.skill || 'General';
         const skillNames = {
+            'general': 'General',
             'dsa': 'DSA',
             'behavioral': 'Behavioral', 
             'sales': 'Sales',
@@ -1102,6 +1105,7 @@ class MainWindowUI {
 
     updateSkillIndicator() {
         const skillNames = {
+            'general': 'General',
             'dsa': 'DSA',
             'behavioral': 'Behavioral', 
             'sales': 'Sales',
@@ -1215,6 +1219,7 @@ class MainWindowUI {
 
     showSkillChangeNotification(skill, direction) {
         const skillNames = {
+            'general': 'General',
             'dsa': 'DSA',
             'behavioral': 'Behavioral', 
             'sales': 'Sales',
