@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopSpeechRecognition: () => ipcRenderer.invoke('stop-speech-recognition'),
   sendAudioChunk: (buffer) => ipcRenderer.send('audio-chunk', { buffer }),
   getSpeechAvailability: () => ipcRenderer.invoke('get-speech-availability'),
+  // Mic-device-change re-attach (AirPods in/out): reset the given channel's VAD
+  // before the renderer re-acquires getUserMedia.
+  reattachSpeechChannel: (source) => ipcRenderer.invoke('speech-reattach-channel', source),
   
   // Window management
   showAllWindows: () => ipcRenderer.invoke('show-all-windows'),

@@ -832,6 +832,34 @@ class SpeechService extends EventEmitter {
     }
   }
 
+  /**
+   * Reset ONE channel's VAD state + segment buffers for a mid-session re-attach
+   * (a mic device swap via the renderer's devicechange handler, or a sleep/wake
+   * re-acquire). Drops the truncated partial captured from the now-dead stream
+   * rather than transcribing a half-word, and resets the segmenter so the
+   * re-acquired stream begins a FRESH utterance. RE-ATTACH-SAFE: if a
+   * transcription is in-flight we DELIBERATELY leave the
+   * inFlight/pendingFlush/pendingFinal serialization untouched so the running
+   * flush completes cleanly — no double-flush, no stranded segment. Never
+   * throws (degrade-never-crash).
+   */
+  resetChannelForReattach(source = 'mic') {
+    const channel = this._channels[source];
+    if (!channel) {
+      return;
+    }
+    try {
+      channel.buffers = [];
+      channel.bytes = 0;
+      channel.vadSpeaking = false;
+      channel.vadSpeechMs = 0;
+      channel.vadLastChunkAt = 0;
+      channel.segmenter.reset();
+    } catch (_) {
+      // A reset must never take down the capture pipeline.
+    }
+  }
+
   /** Reset the segment buffers + flush serialization for BOTH channels. */
   _resetChannelBuffers() {
     for (const channel of Object.values(this._channels)) {

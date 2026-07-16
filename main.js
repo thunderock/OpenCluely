@@ -1,6 +1,6 @@
 const path = require("path");
 const fs = require("fs");
-const { app, BrowserWindow, globalShortcut, session, ipcMain } = require("electron");
+const { app, BrowserWindow, globalShortcut, session, ipcMain, powerMonitor } = require("electron");
 const { upsertEnvContent } = require("./src/core/env-file");
 
 // ── Resolve a stable .env location ──
@@ -90,6 +90,10 @@ const llmService = require("./src/services/llm.service");
 const windowManager = require("./src/managers/window.manager");
 const sessionManager = require("./src/managers/session.manager");
 
+// Sleep/wake re-warm settle delay (openwhispr #766): give the audio/GPU drivers
+// a beat to come back after resume before we re-probe/restart the engine + tap.
+const REWARM_SETTLE_MS = 1500;
+
 class ApplicationController {
   constructor() {
     this.isReady = false;
@@ -105,6 +109,10 @@ class ApplicationController {
     // honors it so a deferred first-run start, a speech-'status' event, or a
     // sleep/wake re-warm never force-starts listening the user had paused.
     this._ambientDesired = true;
+    // Sleep/wake re-warm re-entrancy guard (openwhispr #766). A burst of resume
+    // events must never re-enter and double-restart the whisper-server / tap.
+    this._rewarmInFlight = false;
+    this._powerMonitorWired = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
     // single spoken question can still arrive as a few fragments (mid-thought
@@ -258,6 +266,13 @@ class ApplicationController {
 
       await windowManager.initializeWindows({ showMainWindow: !isFirstRun });
       this.setupGlobalShortcuts();
+
+      // Resilience (STT-03/SC3 "survive a full session"): arm the sleep/wake
+      // re-warm as soon as the app is ready — it lazily resolves the managers
+      // in onWakeFromSleep, so it must NOT wait on the (potentially slow) model
+      // warmup + whisper/tap starts below. openwhispr #766: sleep evicts the
+      // GPU/stream state.
+      this._setupPowerMonitor();
 
       // Initialize default stealth mode with terminal icon
       this.updateAppIcon("terminal");
@@ -553,6 +568,22 @@ class ApplicationController {
       this._ambientDesired = false;
       speechService.stopRecording();
       return speechService.getStatus();
+    });
+
+    // Mic-device-change re-attach (AirPods in/out): the renderer signals here
+    // just before it re-acquires getUserMedia so we drop the truncated partial
+    // from the now-dead device + reset that channel's VAD (no stranded
+    // half-word, no double-flush). Degrade-never-crash.
+    ipcMain.handle("speech-reattach-channel", (_event, source) => {
+      try {
+        if (typeof speechService.resetChannelForReattach === "function") {
+          speechService.resetChannelForReattach(source === "system" ? "system" : "mic");
+        }
+        return { ok: true };
+      } catch (e) {
+        logger.warn("speech-reattach-channel failed", { error: e.message });
+        return { ok: false, error: e.message };
+      }
     });
 
     // Raw PCM audio captured by the renderer's Web Audio API (Windows Whisper path)
@@ -1135,6 +1166,94 @@ class ApplicationController {
         error: e.message,
       });
     }
+  }
+
+  /**
+   * Register the sleep/wake re-warm (openwhispr #766: sleep evicts the local
+   * GPU/stream state — the whisper-server can die and the mic/tap streams go
+   * stale on resume). powerMonitor is only available after app-ready, so this
+   * is called from onAppReady. Guarded so a double-register can't happen, and
+   * wrapped so a missing powerMonitor (non-Electron test import) never crashes.
+   */
+  _setupPowerMonitor() {
+    if (this._powerMonitorWired) {
+      return;
+    }
+    try {
+      if (!powerMonitor || typeof powerMonitor.on !== "function") {
+        return;
+      }
+      powerMonitor.on("resume", () => {
+        this.onWakeFromSleep().catch((e) =>
+          logger.warn("onWakeFromSleep threw (ignored)", { error: e && e.message }),
+        );
+      });
+      this._powerMonitorWired = true;
+      logger.debug("powerMonitor resume handler registered");
+    } catch (e) {
+      logger.warn("Failed to register powerMonitor resume handler", { error: e.message });
+    }
+  }
+
+  /**
+   * Re-warm after the machine wakes (openwhispr #766). Delegates to the pure
+   * src/core/wake-rewarm orchestrator so the guarded sequence (settle → whisper
+   * re-probe/restart → tap reopen → replay ambient) is unit-testable +
+   * degrade-never-crash. Re-entrancy is guarded via `_rewarmInFlight`; an
+   * in-flight transcription is NOT interrupted (the server is only restarted
+   * when actually down).
+   */
+  async onWakeFromSleep() {
+    const { rewarmAfterWake } = require("./src/core/wake-rewarm");
+    const result = await rewarmAfterWake({
+      isInFlight: () => this._rewarmInFlight,
+      setInFlight: (v) => { this._rewarmInFlight = v; },
+      getWhisperManager: () => this.getWhisperServerManager(),
+      getTapManager: () => this.getSystemAudioTapManager(),
+      speechService,
+      onSystemPcm: (buf) => speechService.handleSystemAudioChunk(buf),
+      setSystemChannelEnabled: (live) => {
+        if (typeof speechService.setSystemChannelEnabled === "function") {
+          speechService.setSystemChannelEnabled(live);
+        }
+        if (live && typeof speechService.resetChannelForReattach === "function") {
+          speechService.resetChannelForReattach("system");
+        }
+      },
+      reacquireAmbientMic: () => this._reacquireAmbientMic(),
+      settleMs: REWARM_SETTLE_MS,
+      logger,
+    });
+    logger.info("Wake-from-sleep re-warm complete", result);
+    return result;
+  }
+
+  /**
+   * Replay the LAST known ambient state after a wake. If ambient was actively
+   * listening, re-acquire the renderer getUserMedia stream (sleep can evict it)
+   * by resetting the mic VAD channel + replaying `recording-started` (which the
+   * renderer handles by tearing down + re-acquiring capture). If ambient is
+   * desired-but-idle (engine just recovered), start it. NEVER resumes a paused
+   * session (honors `_ambientDesired`).
+   */
+  _reacquireAmbientMic() {
+    if (!this._ambientDesired) {
+      return "paused";
+    }
+    const status = speechService.getStatus ? speechService.getStatus() : {};
+    if (status.isRecording) {
+      if (typeof speechService.resetChannelForReattach === "function") {
+        speechService.resetChannelForReattach("mic");
+      }
+      BrowserWindow.getAllWindows().forEach((w) => {
+        if (!w.isDestroyed()) {
+          try { w.webContents.send("recording-started"); } catch (_) { /* ignore */ }
+        }
+      });
+      return "reacquired";
+    }
+    this._ensureAmbientListening("wake");
+    return "ensured";
   }
 
   toggleSpeechRecognition() {
