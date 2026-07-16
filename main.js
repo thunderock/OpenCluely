@@ -99,6 +99,13 @@ class ApplicationController {
   this.codingLanguage = "cpp";
     this.speechAvailable = false;
 
+    // Ambient listening (STT-03/SC3): the audio stream stays open launch→quit.
+    // `_ambientDesired` is the user's LAST on/off intent — the interim mic
+    // control (mic button + Alt+R) flips it, and `_ensureAmbientListening()`
+    // honors it so a deferred first-run start, a speech-'status' event, or a
+    // sleep/wake re-warm never force-starts listening the user had paused.
+    this._ambientDesired = true;
+
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
     // single spoken question can still arrive as a few fragments (mid-thought
     // pauses). We buffer fragments and debounce so one question yields one LLM
@@ -384,6 +391,16 @@ class ApplicationController {
           error: e.message,
         });
       }
+
+      // Ambient listening (STT-03/SC3): auto-start from launch so the stream
+      // stays open launch→quit — NON-BLOCKING + guarded. If the engine isn't
+      // ready yet (first-run: the ggml model is still downloading, so
+      // isAvailable() is false), this simply DEFERS — the speech-'status'
+      // handler re-invokes it the moment the engine reports ready. Launch is
+      // never blocked on it, and it is skipped while the onboarding wizard is
+      // up (complete-first-run re-invokes it) so we never grab the mic
+      // mid-setup.
+      this._ensureAmbientListening("launch");
     } catch (error) {
       this.starting = false;
       logger.error("Application initialization failed", {
@@ -484,6 +501,12 @@ class ApplicationController {
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("speech-availability", { available: this.speechAvailable });
       });
+      // Deferred ambient auto-listen (STT-03/SC3): when the engine first
+      // reports ready (e.g. a first-run ggml download just finished + the
+      // whisper-server came up), begin ambient listening WITHOUT a manual
+      // trigger. Idempotent + honors the interim pause, so this never
+      // double-starts and never overrides a user who paused.
+      this._ensureAmbientListening("status");
     });
 
     speechService.on("error", (error) => {
@@ -517,11 +540,17 @@ class ApplicationController {
     });
 
     ipcMain.handle("start-speech-recognition", () => {
+      // Interim ON via the mic button: this IS the ambient on/off control this
+      // phase, so record the desired-listening intent for auto-resume.
+      this._ambientDesired = true;
       speechService.startRecording();
       return speechService.getStatus();
     });
 
     ipcMain.handle("stop-speech-recognition", () => {
+      // Interim OFF via the mic button: pause ambient listening (halts mic
+      // capture; the system-tap ingest is gated off by isRecording).
+      this._ambientDesired = false;
       speechService.stopRecording();
       return speechService.getStatus();
     });
@@ -535,10 +564,12 @@ class ApplicationController {
 
     // Also handle direct send events for fallback
     ipcMain.on("start-speech-recognition", () => {
+      this._ambientDesired = true;
       speechService.startRecording();
     });
 
     ipcMain.on("stop-speech-recognition", () => {
+      this._ambientDesired = false;
       speechService.stopRecording();
     });
 
@@ -769,6 +800,10 @@ class ApplicationController {
             win.webContents.send("speech-availability", { available: this.speechAvailable });
           }
         });
+        // Onboarding is done + the main overlay is shown: now that we won't
+        // interrupt setup, begin ambient listening if the engine is ready
+        // (STT-03/SC3). Defers silently if the model still isn't downloaded.
+        this._ensureAmbientListening("onboarding-complete");
         return { success: true };
       } catch (e) {
         return { success: false, error: e.message };
@@ -1066,6 +1101,42 @@ class ApplicationController {
     });
   }
 
+  /**
+   * The single entry point for ambient auto-listen (STT-03/SC3). Starts
+   * listening ONLY when it is the desired state AND the resident engine is
+   * ready — idempotent + NON-BLOCKING. Called at launch, when the engine first
+   * reports ready (deferred first-run case, via the speech-'status' handler),
+   * after onboarding completes, and on wake-from-sleep. It NEVER force-starts a
+   * session the user paused (honors `_ambientDesired`) and NEVER blocks: if the
+   * engine isn't ready it returns immediately and a later 'status' re-invokes.
+   */
+  _ensureAmbientListening(reason = "auto") {
+    try {
+      if (!this._ambientDesired) {
+        return; // user paused via the interim mic control — do not resume
+      }
+      if (this.isFirstRun) {
+        return; // onboarding wizard is up — don't grab the mic mid-setup
+      }
+      const available = speechService.isAvailable
+        ? speechService.isAvailable()
+        : false;
+      if (!available) {
+        return; // engine not ready yet — defer (a 'status' event re-invokes us)
+      }
+      const status = speechService.getStatus ? speechService.getStatus() : {};
+      if (status.isRecording) {
+        return; // already ambient-listening — idempotent
+      }
+      speechService.startRecording(); // ambient listening on (auto, from onAppReady/status)
+      logger.info("Ambient listening started", { reason });
+    } catch (e) {
+      logger.warn("Ambient listening auto-start failed (will retry on next status)", {
+        error: e.message,
+      });
+    }
+  }
+
   toggleSpeechRecognition() {
     const isAvailable = typeof speechService.isAvailable === 'function' ? speechService.isAvailable() : !!speechService.getStatus?.().isInitialized;
     if (!isAvailable) {
@@ -1079,19 +1150,24 @@ class ApplicationController {
     const currentStatus = speechService.getStatus();
     if (currentStatus.isRecording) {
       try {
+        // Interim OFF: record the paused intent FIRST so a concurrent
+        // 'status'/wake re-warm can't auto-resume what the user just paused.
+        this._ambientDesired = false;
         speechService.stopRecording();
         windowManager.hideChatWindow();
-        logger.info("Speech recognition stopped via global shortcut");
+        logger.info("Ambient listening paused via mic control (Alt+R)");
       } catch (error) {
-        logger.error("Error stopping speech recognition:", error);
+        logger.error("Error pausing ambient listening:", error);
       }
     } else {
       try {
+        // Interim ON: resume ambient listening.
+        this._ambientDesired = true;
         speechService.startRecording();
         windowManager.showChatWindow();
-        logger.info("Speech recognition started via global shortcut");
+        logger.info("Ambient listening resumed via mic control (Alt+R)");
       } catch (error) {
-        logger.error("Error starting speech recognition:", error);
+        logger.error("Error resuming ambient listening:", error);
       }
     }
   }

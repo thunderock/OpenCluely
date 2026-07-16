@@ -635,6 +635,16 @@ class SpeechService extends EventEmitter {
     return { binaryPresent, modelPresent, serverUp };
   }
 
+  /**
+   * Start (ambient) listening. STT-03/SC3: main.js auto-calls this from launch
+   * so the stream stays open launch→quit; the mic button + Alt+R re-enter it as
+   * the interim on/off. IDEMPOTENT: a second call while already recording is a
+   * no-op (the `isRecording` guard below), so a double auto-start / mic-button
+   * mash can't spawn two capture pipelines. Starting brings up BOTH channels —
+   * the mic pipeline (renderer getUserMedia or the native recorder) and, once
+   * the 04-05 tap enables it, the system pipeline (its ingest is gated on
+   * `isRecording`, so it follows this start/stop too).
+   */
   startRecording() {
     try {
       if (!this.available) {
@@ -775,7 +785,7 @@ class SpeechService extends EventEmitter {
     this._resetChannelBuffers();
     this._resetVadState();
     this.emit('recording-started');
-    this.emit('status', 'Local Whisper recording started');
+    this.emit('status', 'Ambient listening started');
 
     // Capture microphone audio in the renderer via the Web Audio API on Windows
     // and macOS. Windows lacks the Unix sox/rec/arecord tools node-record-lpcm16
@@ -974,6 +984,15 @@ class SpeechService extends EventEmitter {
     return VadSegmenter.chunkDurationMs(buffer);
   }
 
+  /**
+   * Stop (pause) listening — the HONEST interim off switch this phase. Halts
+   * BOTH channels: the mic capture is torn down (the renderer stops its
+   * getUserMedia tracks on `recording-stopped`; the native recorder is stopped
+   * below) and the system-tap ingest is gated off (`handleSystemAudioChunk`
+   * no-ops while `isRecording` is false). IDEMPOTENT: a double-stop is a no-op
+   * (the guard below). The tap PROCESS itself keeps its 04-05 launch→quit
+   * lifecycle — pausing simply discards its samples.
+   */
   stopRecording() {
     if (!this.isRecording) {
       return;
