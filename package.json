@@ -8,6 +8,7 @@
     "dev": "env -u ELECTRON_RUN_AS_NODE electron . --no-sandbox --disable-gpu",
     "test-speech": "node scripts/test-speech.js",
     "compile:whisper-server": "node scripts/build-whisper-server.js",
+    "compile:audio-tap": "node scripts/build-macos-audio-tap.js",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
@@ -92,6 +93,7 @@
       "gatekeeperAssess": false,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "OpenCluely uses the microphone to transcribe your speech locally with Whisper.",
+        "NSAudioCaptureUsageDescription": "OpenCluely captures system audio to transcribe the other participant in a call.",
         "NSCameraUsageDescription": "OpenCluely does not record video; this entitlement is only present for media-capture compatibility.",
         "NSScreenCaptureUsageDescription": "OpenCluely captures the screen to read on-screen content for AI assistance."
       }
