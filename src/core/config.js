@@ -67,11 +67,20 @@ class ConfigManager {
           enableAudioLogging: false,
           outputFormat: 'detailed'
         },
+        // Resident whisper.cpp whisper-server engine (STT-01). Collapsed to the
+        // single whisper-server block; the VAD knobs below are now SHARED by both
+        // capture channels (mic + system, 04-04). speech.provider / speech.azure
+        // are deliberately left in place until 04-09 (prove-then-remove).
         whisper: {
-          model: 'turbo',
+          host: '127.0.0.1',      // whisper-server bind host (loopback only)
+          port: 0,                // 0 = auto-pick a free port at start()
+          model: 'small.en',      // → model-weights file ggml-${model}.bin (was 'turbo')
           language: 'en',
+          threads: 0,             // 0 = auto (clamp 50% of cores to [2,8])
+          noSpeechThreshold: 0.6, // drop a segment if no_speech_prob > this
           // segmentMs is the legacy fixed-window size and now acts as the
           // hard upper bound for a single utterance when VAD is enabled.
+          // Retained as a harmless backstop until 04-03 rewrites the flush.
           segmentMs: 4000,
           // Voice-activity-detection driven segmentation. Instead of cutting
           // audio on a blind timer (which splits sentences mid-word), we flush
