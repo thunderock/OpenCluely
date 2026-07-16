@@ -180,6 +180,7 @@ describe('buildTranscriptionRequest', () => {
     assert.equal(r.kind, 'transcription');
     assert.equal(r.skill, 'dsa');
     assert.ok(r.systemPrompt.includes('Intelligent Transcription Response System'));
+    assert.ok(!/interview/i.test(r.systemPrompt), 'transcription prompt has no interview framing (GEN-01)');
     assert.equal(r.userText, 'hi');   // cleanText trims
     assert.deepEqual(r.images, []);
     assertNoWireKeys(r);

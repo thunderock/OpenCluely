@@ -2,7 +2,7 @@
 
 ## Overview
 
-This milestone turns OpenCluely from a cloud-Gemini, on-demand overlay into a local-first, always-on multimodal copilot. The build order is dependency- and safety-driven: first lay a foundation (a generic service supervisor plus a test/lint/Makefile safety net for refactoring the god-files); then land the LLM provider abstraction *wrapping the existing Gemini code verbatim* so the app never stops working; then stand up the local model as the primary path and only *after it is proven* delete Gemini + Azure; in parallel, replace the per-utterance Whisper spawn with a resident engine that continuously hears both sides of a conversation; harden the render/permission surface alongside the new screen-capture and notes inputs; wire the pause-triggered orchestrator that fuses screen + speech + notes into a streamed, relevance-gated suggestion (the core value); add on-demand Claude/Codex CLI backup off the hot path; and finish with an unsigned universal macOS DMG in CI plus dead-code and license cleanup. The load-bearing rule threaded through everything: **abstraction first → local proven → cloud removed last.**
+This milestone turns OpenCluely from a cloud-Gemini, on-demand overlay into a local-first, always-on multimodal copilot. The build order is dependency- and safety-driven: first lay a foundation (a generic service supervisor plus a test/lint/Makefile safety net for refactoring the god-files); then land the LLM provider abstraction *wrapping the existing Gemini code verbatim* so the app never stops working; then stand up the local model as the primary path and only *after it is proven* delete Gemini (Azure is STT-only, so it's removed in the next phase alongside the STT overhaul); in parallel, replace the per-utterance Whisper spawn with a resident engine that continuously hears both sides of a conversation; harden the render/permission surface alongside the new screen-capture and notes inputs; wire the pause-triggered orchestrator that fuses screen + speech + notes into a streamed, relevance-gated suggestion (the core value); add on-demand Claude/Codex CLI backup off the hot path; and finish with an unsigned universal macOS DMG in CI plus dead-code and license cleanup. The load-bearing rule threaded through everything: **abstraction first → local proven → cloud removed last.**
 
 ## Phases
 
@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation — Supervisor, Tests, Lint, Makefile** - Generic service supervisor + a test/lint/Makefile safety net for safe refactoring
 - [x] **Phase 2: Provider Seam — Wrap Gemini Verbatim** - `LLMProvider` abstraction + `RequestBuilder`; app still works on Gemini, call-sites unchanged
-- [ ] **Phase 3: Local Engine + Cloud Removal** - Local multimodal model as the primary/default path; Gemini + Azure removed last, after Local is proven
+- [x] **Phase 3: Local Engine + Cloud Removal** - Local multimodal model as the primary/default path; Gemini removed last, after Local is proven (Azure is STT-only → removed in Phase 4 with the STT replacement) (completed 2026-07-16)
 - [ ] **Phase 4: Continuous Hearing — Resident STT + Ambient Listening** - Resident whisper.cpp continuously transcribes mic + macOS system audio from launch to quit
 - [ ] **Phase 5: Continuous Capture, Notes & Hardening** - Throttled/deduped screen capture + bounded `.md` context, shipped with output sanitization, TCC recovery, and IPC scoping
 - [ ] **Phase 6: Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI** - After each pause, a relevant streamed answer appears; relevance gate + listening indicator + kill switch
@@ -55,7 +55,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] 02-03-PLAN.md — Thin `llm.service` facade flip + cert/UA relocation into provider (gated) + 3-entry-point smoke [live smoke waived — no key] (Wave 3)
 
 ### Phase 3: Local Engine + Cloud Removal
-**Goal**: A local multimodal model is the primary, default answer path over an OpenAI-compatible localhost endpoint — the "if all else fails, this works" core value engine — and only after it is proven are Gemini + Azure deleted entirely.
+**Goal**: A local multimodal model is the primary, default answer path over an OpenAI-compatible localhost endpoint — the "if all else fails, this works" core value engine — and only after it is proven is Gemini deleted entirely. (Azure is STT-only; its SDK + browser-DOM polyfill are removed in Phase 4 alongside the resident-STT replacement, so voice keeps working.)
 **Depends on**: Phase 2 (provider seam + `RequestBuilder`); Phase 1 (`ServiceSupervisor` for the model manager)
 **Requirements**: PROV-03, PROV-04, PROV-05, PROV-06, PROV-07, GEN-01
 **Success Criteria** (what must be TRUE):
@@ -63,19 +63,28 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The user captures/attaches a screenshot and the local multimodal model answers directly from the image (no OCR step).
   3. On first run with the model missing, the app pulls `qwen3-vl:8b` with visible, resumable progress, caches it at Ollama's default location, adopts a running Ollama if present (starts one only if absent, never killing a daemon it didn't start), and keeps it resident (`keep_alive:-1`).
   4. The user can choose provider and model in settings with Local as the default, and a non-coding question (e.g., summarizing an on-screen contract clause) gets a relevant general-purpose answer, with DSA/coding available as an optional skill overlay.
-  5. Gemini and Azure are fully removed (SDKs, hardcoded hosts, cert-verify bypass, Azure browser-DOM polyfill) — done last; and measured TTFT at session end with full md-notes loaded stays within budget while total memory (VLM + KV + resident Whisper + Electron) stays under the macOS GPU-wired ceiling with no swap.
-**Plans**: TBD (derived in /gsd:plan-phase) — RESEARCH FLAG: TTFT/memory validation on 32 GB, multimodal request shape, Ollama adopt/own lifecycle
+  5. Gemini is fully removed (SDK, hardcoded hosts, cert-verify bypass) — done last, after Local is proven; and a rough TTFT/memory smoke on a representative prompt (screenshot + md-notes-sized filler) stays within budget with the model fully GPU-resident and no swap. (Azure's STT SDK + browser-DOM polyfill move to Phase 4 / STT-05 so voice keeps working; full sustained-load TTFT/memory validation is Phase 6.)
+**Plans**: 8 plans (5 waves)
+- [x] 03-01-PLAN.md — Foundation: install openai+ollama, restructure config into per-provider blocks (Local default) (Wave 1)
+- [x] 03-02-PLAN.md — GEN-01: general reply-suggester default + Coding skill; neutralize both interview prompt sources (Wave 1)
+- [x] 03-03-PLAN.md — LocalProvider (PROV-03/04): text stream + screenshot over /v1; mirror the full seam; register Local (Wave 2)
+- [x] 03-04-PLAN.md — LocalModelManager (PROV-05): adopt/own Ollama + resumable pull + resident; model IPC + lifecycle (Wave 2)
+- [x] 03-05-PLAN.md — Settings UI (PROV-06): provider + model pickers (curated + advanced), Local default, status/repair (Wave 3)
+- [x] 03-06-PLAN.md — First-run onboarding (Ollama guide + auto-pull) + in-overlay Local-down recovery UX (Wave 3)
+- [x] 03-07-PLAN.md — Validation gate: prove Local (3 entry points + rough TTFT/memory smoke) — manual sign-off (Wave 4)
+- [x] 03-08-PLAN.md — Cloud removal (PROV-07): delete Gemini behind a hard manual approval; keep Azure STT (Wave 5)
 
 ### Phase 4: Continuous Hearing — Resident STT + Ambient Listening
 **Goal**: The app continuously hears both sides of a conversation through a resident transcriber, with no per-utterance process spawn — the prerequisite for continuous mode.
 **Depends on**: Phase 1 (`ServiceSupervisor`, if using a supervised `whisper-server`); independent of the provider phases (2–3)
-**Requirements**: STT-01, STT-02, STT-03, STT-04
+**Requirements**: STT-01, STT-02, STT-03, STT-04, STT-05
 **Success Criteria** (what must be TRUE):
   1. Each VAD segment transcribes against a resident whisper.cpp engine with no per-utterance process/model spawn or cold-start — the Python subprocess + venv path is deleted.
   2. On first run the STT model downloads and caches locally with visible progress.
   3. The app keeps the audio stream open from launch to quit (ambient listening), transcribing on VAD-detected natural pauses using the existing VAD + hallucination filter.
   4. On macOS, audio from the other party (system/loopback via ScreenCaptureKit) is transcribed as a separate channel from the mic, so a question you only *hear* is captured.
   5. Two minutes of silence produces zero transcripts (the silence-hallucination filter holds under always-on).
+  6. The Azure Speech SDK and its browser-DOM polyfill are fully removed (deferred here from Phase 3 — Azure is STT-only, kept through Phase 3 so voice never breaks; deleted once the resident whisper.cpp engine replaces it).
 **Plans**: TBD (derived in /gsd:plan-phase) — RESEARCH FLAG: in-process `smart-whisper` vs supervised `whisper-server`; validate native-addon ABI against Electron 29 early
 
 ### Phase 5: Continuous Capture, Notes & Hardening
@@ -144,7 +153,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 |-------|----------------|--------|-----------|
 | 1. Foundation — Supervisor, Tests, Lint, Makefile | 5/5 | Complete | 2026-07-14 |
 | 2. Provider Seam — Wrap Gemini Verbatim | 3/3 | Complete | 2026-07-14 |
-| 3. Local Engine + Cloud Removal | 0/TBD | Not started | - |
+| 3. Local Engine + Cloud Removal | 0/8 | Complete    | 2026-07-16 |
 | 4. Continuous Hearing — Resident STT + Ambient Listening | 0/TBD | Not started | - |
 | 5. Continuous Capture, Notes & Hardening | 0/TBD | Not started | - |
 | 6. Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI | 0/TBD | Not started | - |

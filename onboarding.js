@@ -1,14 +1,16 @@
 /**
  * Onboarding wizard controller.
  *
- * Drives the 5-step flow rendered in onboarding.html and persists
+ * Drives the onboarding flow rendered in onboarding.html and persists
  * everything via the electronAPI bridge exposed by preload.js:
  *
  *   1. Welcome
- *   2. Gemini API key entry + live connection test
- *   3. Speech provider choice (Whisper / Azure / Skip)
- *   4. Whisper detect + (optional) install — only shown when whisper
- *   5. Star-the-repo prompt + summary
+ *   2. Speech provider choice (Whisper / Azure / Skip)
+ *   3. Whisper detect + (optional) install — only shown when whisper
+ *   4. Whisper model download — only shown when whisper
+ *   5. Local model engine (Ollama) guide-install + re-check (openwhispr-style)
+ *   6. Local model pull (qwen3-vl:8b) with resumable progress + preflight warn
+ *   7. Star-the-repo prompt + summary
  */
 
 (function () {
@@ -40,8 +42,6 @@
   // ── State ─────────────────────────────────────────────────────────
   const state = {
     step: 0,
-    geminiKey: '',
-    geminiConfigured: false, // a key already exists in .env from a prior run
     speechProvider: null, // 'whisper' | 'azure' | 'skip'
     azureKey: '',
     azureRegion: '',
@@ -51,12 +51,16 @@
     modelDownloadChoice: null, // 'now' | 'later'
     modelDownloading: false,
     modelDownloaded: false,
+    ollamaDetected: false, // local model engine (Ollama) server reachable
+    modelPulling: false, // qwen3-vl:8b pull in flight
+    modelPulled: false,
     finished: false,
   };
 
-  // Screens are: welcome → apikey → speech → whisper? → finish
-  // The whisper screen is only visited if state.speechProvider === 'whisper'
-  const stepScreens = ['welcome', 'apikey', 'speech'];
+  // Screens are: welcome → speech → whisper? → ollama → model-pull → finish
+  // The whisper screen is only visited if state.speechProvider === 'whisper'.
+  // Local is the default (and only) engine, so the app works with no cloud key.
+  const stepScreens = ['welcome', 'speech'];
 
   // ── Step rendering ────────────────────────────────────────────────
   function totalSteps() {
@@ -85,8 +89,10 @@
     }
     refreshStepper();
     backBtn.style.visibility = state.step === 0 ? 'hidden' : 'visible';
-    // Reset next button state unless we're actively downloading a model
-    if (name !== 'model-download' || !state.modelDownloading) {
+    // Reset next button state unless we're actively downloading/pulling a model
+    const busy = (name === 'model-download' && state.modelDownloading)
+      || (name === 'model-pull' && state.modelPulling);
+    if (!busy) {
       nextBtn.disabled = false;
       nextBtn.classList.remove('success');
       nextBtn.classList.add('primary');
@@ -113,10 +119,14 @@
   }
 
   // Order depends on choices — e.g. whisper path inserts the install screen.
+  // The local-model screens (ollama guide-install + qwen3-vl:8b pull) always
+  // run: Local is the default engine, so this is core setup, not optional.
   function computeScreenOrder() {
-    const out = ['welcome', 'apikey', 'speech'];
+    const out = ['welcome', 'speech'];
     if (state.speechProvider === 'whisper') out.push('whisper');
     if (state.speechProvider === 'whisper') out.push('model-download');
+    out.push('ollama');
+    out.push('model-pull');
     out.push('finish');
     return out;
   }
@@ -132,9 +142,6 @@
     switch (name) {
       case 'welcome':
         return true;
-      case 'apikey':
-        // A key already in .env is enough — don't force a re-entry.
-        return !!state.geminiKey.trim() || state.geminiConfigured;
       case 'speech':
         if (state.speechProvider === 'azure') {
           return !!state.azureKey.trim() && !!state.azureRegion.trim();
@@ -145,53 +152,19 @@
         return state.whisperDetected || state.skippingWhisper;
       case 'model-download':
         return !!state.modelDownloadChoice && !state.modelDownloading;
+      case 'ollama':
+        // openwhispr-style: must have a running engine before we can pull.
+        return state.ollamaDetected;
+      case 'model-pull':
+        // Friendly failure: once the pull settles (ok or not) let them proceed;
+        // a failed/partial pull resumes on retry or first use.
+        return !state.modelPulling;
       case 'finish':
         return true;
       default:
         return true;
     }
   }
-
-  // ── Wire up: API key ──────────────────────────────────────────────
-  const geminiInput = $('#geminiKey');
-  const toggleVis = $('#toggleVis');
-  const keyStatus = $('#keyStatus');
-
-  function setKeyStatus(state_, text) {
-    keyStatus.className = `status-pill ${state_}`;
-    keyStatus.style.display = 'inline-flex';
-    const icon = keyStatus.querySelector('i');
-    const txt = keyStatus.querySelector('.text');
-    if (state_ === 'testing') {
-      icon.className = 'fas fa-circle-notch fa-spin';
-    } else if (state_ === 'success') {
-      icon.className = 'fas fa-check-circle';
-    } else if (state_ === 'error') {
-      icon.className = 'fas fa-circle-xmark';
-    } else {
-      icon.className = 'fas fa-circle-info';
-    }
-    txt.textContent = text;
-  }
-
-  geminiInput.addEventListener('input', () => {
-    state.geminiKey = geminiInput.value.trim();
-    if (!state.geminiKey) {
-      keyStatus.style.display = 'none';
-    } else if (keyStatus.classList.contains('success')) {
-      // Keep success state — they had a valid key, may be editing
-    } else {
-      setKeyStatus('idle', 'Key entered');
-    }
-  });
-
-  toggleVis.addEventListener('click', () => {
-    const showing = geminiInput.type === 'text';
-    geminiInput.type = showing ? 'password' : 'text';
-    toggleVis.innerHTML = showing
-      ? '<i class="fas fa-eye"></i>'
-      : '<i class="fas fa-eye-slash"></i>';
-  });
 
   // ── Wire up: Speech choices ───────────────────────────────────────
   $$('#speechChoices .choice-card').forEach((card) => {
@@ -444,14 +417,176 @@
     }
   }
 
+  // ── Wire up: Local model engine (Ollama) screen ──────────────────
+  const ollamaSubtitle = $('#ollamaSubtitle');
+  const ollamaDetectState = $('#ollamaDetectState');
+  const ollamaDetectStatus = $('#ollamaDetectStatus');
+  const ollamaInstallCard = $('#ollamaInstallCard');
+
+  function setOllamaStatus(state_, text) {
+    ollamaDetectStatus.className = `status-pill ${state_}`;
+    const icon = ollamaDetectStatus.querySelector('i');
+    if (state_ === 'success') icon.className = 'fas fa-check-circle';
+    else if (state_ === 'error') icon.className = 'fas fa-circle-xmark';
+    else if (state_ === 'idle') icon.className = 'fas fa-circle-info';
+    else icon.className = 'fas fa-circle-notch fa-spin';
+    ollamaDetectStatus.querySelector('.text').textContent = text;
+  }
+
+  async function runOllamaDetect() {
+    ollamaDetectState.textContent = 'checking…';
+    setOllamaStatus('testing', 'Probing');
+    // Guide-install path: the engine is missing until getModelStatus proves the
+    // server is up. We never bundle Ollama or silently fail — we point the user
+    // at the installer (openwhispr-style) and let them re-check.
+    try {
+      // Detection only needs serverUp — skip the model-liveness generate so this
+      // never blocks on "Probing" while a cold model loads.
+      const s = (await window.electronAPI.getModelStatus({ probeResponds: false })) || {};
+      state.ollamaDetected = !!s.serverUp;
+    } catch (_) {
+      state.ollamaDetected = false;
+    }
+    if (state.ollamaDetected) {
+      ollamaDetectState.textContent = 'running';
+      setOllamaStatus('success', 'Ollama detected');
+      ollamaSubtitle.textContent = 'Ollama is running. Next we’ll download the model that powers your answers.';
+      ollamaInstallCard.style.display = 'none';
+      nextBtn.disabled = false;
+    } else {
+      ollamaDetectState.textContent = 'not found';
+      setOllamaStatus('error', 'Not running');
+      ollamaSubtitle.textContent = 'OpenCluely needs the Ollama engine to run its local model. Install it, then re-check.';
+      ollamaInstallCard.style.display = 'block';
+      nextBtn.disabled = true;
+    }
+  }
+
+  let ollamaInitialized = false;
+  function enterOllamaScreen() {
+    if (!ollamaInitialized) {
+      ollamaInitialized = true;
+      const dl = $('#ollamaDownloadBtn');
+      const recheck = $('#ollamaRecheckBtn');
+      if (dl) {
+        dl.addEventListener('click', () => {
+          if (window.electronAPI && window.electronAPI.openExternal) {
+            window.electronAPI.openExternal('https://ollama.com/download');
+          }
+        });
+      }
+      if (recheck) {
+        recheck.addEventListener('click', () => runOllamaDetect());
+      }
+    }
+    runOllamaDetect();
+  }
+
+  // ── Wire up: Local model pull screen (qwen3-vl:8b) ────────────────
+  const modelPullBar = $('#modelPullBar');
+  const modelPullStatus = $('#modelPullStatus');
+  const modelPullLog = $('#modelPullLog');
+  const modelPreflightWarn = $('#modelPreflightWarn');
+  const LOCAL_MODEL_TAG = 'qwen3-vl:8b';
+
+  function appendModelPullLog(line) {
+    modelPullLog.textContent += (modelPullLog.textContent ? '\n' : '') + line;
+    modelPullLog.scrollTop = modelPullLog.scrollHeight;
+  }
+
+  async function renderPreflightWarnings() {
+    modelPreflightWarn.innerHTML = '';
+    try {
+      const pf = (await window.electronAPI.modelPreflight()) || {};
+      const warnings = Array.isArray(pf.warnings) ? pf.warnings : [];
+      // Warn, do not block — friendly failure per the locked first-run decision.
+      warnings.forEach((w) => {
+        const banner = document.createElement('div');
+        banner.className = 'preflight-warn';
+        banner.innerHTML = `<i class="fas fa-triangle-exclamation"></i><span></span>`;
+        banner.querySelector('span').textContent = w;
+        modelPreflightWarn.appendChild(banner);
+      });
+    } catch (_) { /* preflight is best-effort */ }
+  }
+
+  let modelPullInitialized = false;
+  function enterModelPullScreen() {
+    if (state.modelPulled || state.modelPulling) return;
+    if (!modelPullInitialized) {
+      modelPullInitialized = true;
+    }
+    startModelPull();
+  }
+
+  async function startModelPull() {
+    state.modelPulling = true;
+    nextBtn.disabled = true;
+    nextBtn.classList.remove('success');
+    nextBtn.classList.add('primary');
+    nextBtn.innerHTML = '<span class="spinner"></span> Downloading…';
+
+    await renderPreflightWarnings();
+
+    modelPullBar.style.width = '0%';
+    modelPullStatus.textContent = 'Starting download…';
+    appendModelPullLog(`Pulling ${LOCAL_MODEL_TAG}…`);
+
+    // Structured progress { status, percent, completed, total } — render the
+    // percent into the bar (mirrors the whisper download-progress plumbing).
+    let unsubscribe = null;
+    if (window.electronAPI && window.electronAPI.onModelPullProgress) {
+      unsubscribe = window.electronAPI.onModelPullProgress((p) => {
+        if (!p) return;
+        if (typeof p.percent === 'number') {
+          modelPullBar.style.width = `${p.percent}%`;
+        }
+        if (p.status) {
+          modelPullStatus.textContent = p.percent != null
+            ? `${p.status} — ${p.percent}%`
+            : p.status;
+          appendModelPullLog(p.percent != null ? `${p.status} (${p.percent}%)` : p.status);
+        }
+      });
+    }
+
+    try {
+      const r = await window.electronAPI.pullModel(LOCAL_MODEL_TAG);
+      state.modelPulling = false;
+      if (r && r.ok) {
+        state.modelPulled = true;
+        modelPullBar.style.width = '100%';
+        modelPullStatus.textContent = 'Model ready';
+        appendModelPullLog(`✓ ${LOCAL_MODEL_TAG} is ready.`);
+        nextBtn.disabled = false;
+        nextBtn.classList.remove('primary');
+        nextBtn.classList.add('success');
+        nextBtn.innerHTML = '<i class="fas fa-check-circle"></i> Continue';
+      } else {
+        modelPullStatus.textContent = 'Download did not finish';
+        appendModelPullLog(`✗ ${(r && r.message) || 'Download failed'} — you can retry; it resumes where it left off.`);
+        // Friendly failure: let them continue; the model pulls on first use.
+        nextBtn.disabled = false;
+        nextBtn.innerHTML = 'Continue <i class="fas fa-arrow-right"></i>';
+      }
+    } catch (e) {
+      state.modelPulling = false;
+      modelPullStatus.textContent = 'Download error';
+      appendModelPullLog(`! ${e.message || e} — you can retry; it resumes where it left off.`);
+      nextBtn.disabled = false;
+      nextBtn.innerHTML = 'Continue <i class="fas fa-arrow-right"></i>';
+    } finally {
+      if (typeof unsubscribe === 'function') {
+        try { unsubscribe(); } catch (_) { /* ignore */ }
+      } else if (window.electronAPI && window.electronAPI.removeAllListeners) {
+        try { window.electronAPI.removeAllListeners('model-pull-progress'); } catch (_) { /* ignore */ }
+      }
+    }
+  }
+
   // ── Wire up: Finish screen ────────────────────────────────────────
   function populateSummary() {
     const rows = [];
-    rows.push({
-      label: '<i class="fas fa-key"></i> Gemini API',
-      value: (state.geminiKey || state.geminiConfigured) ? 'Configured' : 'Missing',
-      cls: (state.geminiKey || state.geminiConfigured) ? 'ok' : 'skip',
-    });
     if (state.speechProvider === 'whisper') {
       rows.push({
         label: '<i class="fas fa-microphone"></i> Speech',
@@ -510,19 +645,10 @@
   nextBtn.addEventListener('click', async () => {
     const name = currentScreenName();
     if (!canAdvance()) {
-      // Lightly nudge the user
-      if (name === 'apikey') setKeyStatus('error', 'Enter a Gemini API key');
       return;
     }
 
-    // Persist settings on speech selection (Azure path), since we
-    // already saved geminiKey on test; do it here too if user skipped
-    // testing.
-    if (name === 'apikey' && state.geminiKey && window.electronAPI) {
-      try {
-        await window.electronAPI.saveSettings({ geminiKey: state.geminiKey });
-      } catch (_) { /* surfaced elsewhere */ }
-    }
+    // Persist speech settings on the speech screen (Azure path).
     if (name === 'speech' && window.electronAPI) {
       try {
         const payload = {
@@ -587,6 +713,8 @@
     showScreen(nextName);
     if (nextName === 'whisper') enterWhisperScreen();
     if (nextName === 'model-download') enterModelDownloadScreen();
+    if (nextName === 'ollama') enterOllamaScreen();
+    if (nextName === 'model-pull') enterModelPullScreen();
     if (nextName === 'finish') populateSummary();
 
     // Re-render stepper with new total
@@ -651,19 +779,4 @@
 
   // ── Boot ──────────────────────────────────────────────────────────
   showScreen('welcome');
-
-  // Pre-populate Gemini key from existing .env (if any) so users with
-  // a partial config don't have to retype.
-  if (window.electronAPI && window.electronAPI.getFirstRunStatus) {
-    window.electronAPI.getFirstRunStatus().then((s) => {
-      if (s && s.geminiConfigured) {
-        // We can't read the key back (settings returns empty for keys),
-        // but we can mark status as success if the env file already has one
-        // and let the user advance without retyping it.
-        state.geminiConfigured = true;
-        setKeyStatus('success', 'Already configured — click Continue');
-        geminiInput.placeholder = '•••••••••••••••• (already set)';
-      }
-    }).catch(() => {});
-  }
 })();

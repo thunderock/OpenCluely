@@ -2,7 +2,7 @@
 //
 // Declares the four interface methods every provider must implement. The
 // default implementations throw so a subclass is forced to override them.
-// Contract only — no config, registry, or Gemini/wire logic lives here.
+// Contract only — no config, registry, or provider/wire logic lives here.
 
 class LLMProvider {
   // Non-streaming answer for a neutral request struct.

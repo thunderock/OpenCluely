@@ -270,6 +270,31 @@
         .settings-note code {
             color: rgba(255, 255, 255, 0.9);
         }
+
+        /* Progress/health output for the local model engine — mirrors the
+           whisper install-log style used in onboarding. */
+        .install-log {
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-family: 'SF Mono', Menlo, Consolas, monospace;
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.7);
+            max-height: 120px;
+            overflow-y: auto;
+            margin-top: 10px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .install-log:empty {
+            display: none;
+        }
+
+        #providerStatus:empty {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -317,7 +342,8 @@
                             <div class="settings-item-description">Choose your current focus area</div>
                         </div>
                         <select class="input-field" id="activeSkill">
-                            <option value="dsa">Data Structures & Algorithms</option>
+                            <option value="general">General</option>
+                            <option value="programming">Coding</option>
                         </select>
                     </div>
                 </div>
@@ -426,20 +452,80 @@
             
             <div class="settings-section">
                 <div class="settings-section-title">
-                    <i class="fas fa-robot"></i>
-                    Gemini Settings
+                    <i class="fas fa-microchip"></i>
+                    AI Model
                 </div>
                 <div class="settings-section-content">
                     <div class="settings-item">
                         <div>
-                            <div class="settings-item-label">Google API Key</div>
-                            <div class="settings-item-description">Your Google API key for Gemini models</div>
+                            <div class="settings-item-label">Provider</div>
+                            <div class="settings-item-description">Local runs privately on this machine — no cloud, no API key.</div>
                         </div>
-                        <input type="password" class="input-field" id="geminiKey" placeholder="Enter your Google API key">
+                        <select class="input-field" id="llmProvider">
+                            <option value="local">Local (Ollama)</option>
+                        </select>
+                    </div>
+
+                    <!-- Local model fields (shown only when Local is selected) -->
+                    <div id="localModelFields" class="settings-group">
+                        <div class="settings-item">
+                            <div class="settings-stack">
+                                <div>
+                                    <div class="settings-item-label">Model</div>
+                                    <div class="settings-item-description">Curated local models. Choose "Advanced" to pick any model already installed in the running Ollama.</div>
+                                </div>
+                                <select class="input-field" id="localModel" style="max-width: 100%;">
+                                    <option value="qwen3-vl:8b">qwen3-vl:8b (default)</option>
+                                    <option value="qwen3-vl:30b">qwen3-vl:30b</option>
+                                    <option value="gemma3:4b">gemma3:4b</option>
+                                    <option value="gemma3:12b">gemma3:12b</option>
+                                    <option value="__advanced__">Advanced: any installed model…</option>
+                                </select>
+                                <select class="input-field" id="localModelAdvanced" style="display:none; max-width: 100%;"></select>
+                            </div>
+                        </div>
+
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Connection</div>
+                                <div class="settings-item-description">Verify OpenCluely can reach the selected provider</div>
+                            </div>
+                            <button class="btn" id="testProviderBtn">
+                                <i class="fas fa-plug"></i>
+                                Test connection
+                            </button>
+                        </div>
+                        <div id="providerStatus" class="settings-note"></div>
+
+                        <!-- Model status / health + repair -->
+                        <div class="settings-item">
+                            <div class="settings-stack">
+                                <div>
+                                    <div class="settings-item-label">Model status</div>
+                                    <div class="settings-item-description">Ownership plus server / model / health for the local engine</div>
+                                </div>
+                                <div id="modelStatus" class="settings-note">Checking…</div>
+                            </div>
+                        </div>
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Repair model</div>
+                                <div class="settings-item-description">Re-download or repair the local model if it is missing or broken</div>
+                            </div>
+                            <button class="btn" id="repairModelBtn">
+                                <i class="fas fa-arrows-rotate"></i>
+                                Re-download / repair
+                            </button>
+                        </div>
+                        <div class="install-log" id="modelStatusLog"></div>
+
+                        <div class="settings-note">
+                            The provider and model apply on next launch — OpenCluely resolves the selected engine at startup, consistent with the app's other restart-to-apply settings.
+                        </div>
                     </div>
                 </div>
             </div>
-            
+
             <div class="settings-section">
                 <div class="settings-section-title">
                     <i class="fas fa-window-maximize"></i>

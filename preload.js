@@ -30,12 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   formatSessionHistory: () => ipcRenderer.invoke('format-session-history'),
   sendChatMessage: (text) => ipcRenderer.invoke('send-chat-message', text),
   getSkillPrompt: (skillName) => ipcRenderer.invoke('get-skill-prompt', skillName),
-  
-  // Gemini LLM configuration
-  setGeminiApiKey: (apiKey) => ipcRenderer.invoke('set-gemini-api-key', apiKey),
-  getGeminiStatus: () => ipcRenderer.invoke('get-gemini-status'),
-  testGeminiConnection: () => ipcRenderer.invoke('test-gemini-connection'),
-  
+
   // Settings
   showSettings: () => ipcRenderer.invoke('show-settings'),
   hideSettings: () => ipcRenderer.invoke('hide-settings'),
@@ -56,6 +51,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
     ipcRenderer.on('install-progress', wrapped);
     return () => ipcRenderer.removeListener('install-progress', wrapped);
+  },
+
+  // Local model engine (PROV-05) — mirrors the whisper download-progress
+  // bridges above, but pull progress arrives as structured { status, percent }.
+  pullModel: (modelTag) => ipcRenderer.invoke('download-model', modelTag),
+  getModelStatus: (opts) => ipcRenderer.invoke('get-model-status', opts),
+  listInstalledModels: () => ipcRenderer.invoke('list-installed-models'),
+  modelPreflight: () => ipcRenderer.invoke('model-preflight'),
+  recoverModel: (action) => ipcRenderer.invoke('recover-model', action),
+  testProviderConnection: () => ipcRenderer.invoke('test-provider-connection'),
+  onModelPullProgress: (callback) => {
+    const wrapped = (_event, p) => {
+      try { callback(p); } catch (err) { console.error('onModelPullProgress error:', err); }
+    };
+    ipcRenderer.on('model-pull-progress', wrapped);
+    return () => ipcRenderer.removeListener('model-pull-progress', wrapped);
   },
   updateAppIcon: (iconKey) => ipcRenderer.invoke('update-app-icon', iconKey),
   updateActiveSkill: (skill) => ipcRenderer.invoke('update-active-skill', skill),
@@ -109,7 +120,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTranscriptionLlmResponse: (callback) => ipcRenderer.on('transcription-llm-response', callback),
   onTranscriptionLlmResponseStart: (callback) => ipcRenderer.on('transcription-llm-response-start', callback),
   onTranscriptionLlmResponseChunk: (callback) => ipcRenderer.on('transcription-llm-response-chunk', callback),
-  onOpenGeminiConfig: (callback) => ipcRenderer.on('open-gemini-config', callback),
   onDisplayLlmResponse: (callback) => ipcRenderer.on('display-llm-response', callback),
   onShowLoading: (callback) => ipcRenderer.on('show-loading', callback),
   onSkillChanged: (callback) => ipcRenderer.on('skill-changed', callback),

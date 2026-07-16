@@ -2,12 +2,15 @@ const fs = require('fs');
 const path = require('path');
 const skillNormalizer = require('./src/core/skill-normalizer');
 
+// Skills shipped as loadable .md prompts: General (default) + Coding.
+const SHIPPED_SKILLS = ['general', 'programming'];
+
 class PromptLoader {
   constructor() {
     this.prompts = new Map();
     this.promptsLoaded = false;
     this.skillPromptSent = new Set();
-    // Focus only on DSA
+    // Skills that take a programming-language injection (see skill-normalizer).
     this.skillsRequiringProgrammingLanguage = [...skillNormalizer.SKILLS_REQUIRING_PROGRAMMING_LANGUAGE];
   }
 
@@ -29,7 +32,7 @@ class PromptLoader {
       for (const file of files) {
         if (file.endsWith('.md')) {
           const skillName = path.basename(file, '.md');
-          if (skillName !== 'dsa') continue; // only keep DSA
+          if (!SHIPPED_SKILLS.includes(skillName)) continue; // ship only General + Coding
           const filePath = path.join(promptsDir, file);
           const promptContent = fs.readFileSync(filePath, 'utf8');
           
@@ -118,70 +121,6 @@ class PromptLoader {
   }
 
   /**
-   * Prepare Gemini API request with model memory or regular message
-   * @param {string} skillName - The active skill
-   * @param {string} userMessage - The user's message/query
-   * @param {Array} storedMemory - Current stored memory
-   * @param {string|null} programmingLanguage - Optional programming language
-   * @returns {Object} Gemini API request configuration
-   */
-  prepareGeminiRequest(skillName, userMessage, storedMemory, programmingLanguage = null) {
-    const normalizedSkillName = this.normalizeSkillName(skillName);
-    const skillPrompt = this.getSkillPrompt(normalizedSkillName, programmingLanguage);
-    
-    const requestConfig = {
-      model: 'gemini-pro', // or your preferred Gemini model
-      contents: [],
-      systemInstruction: null,
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 2048,
-      }
-    };
-
-    // If stored memory is empty or skill prompt not sent, use model memory
-    if (this.shouldSendAsModelMemory(skillName, storedMemory)) {
-      if (skillPrompt) {
-        // Send skill prompt as system instruction (model memory)
-        requestConfig.systemInstruction = {
-          parts: [{ text: skillPrompt }]
-        };
-        
-        // Add user message as regular content
-        requestConfig.contents.push({
-          role: 'user',
-          parts: [{ text: userMessage }]
-        });
-        
-        // Mark that we're sending this as model memory
-        this.skillPromptSent.add(normalizedSkillName);
-        
-        return {
-          ...requestConfig,
-          isUsingModelMemory: true,
-          skillUsed: normalizedSkillName,
-          programmingLanguage
-        };
-      } else {
-        console.warn(`No system prompt found for skill: ${normalizedSkillName}`);
-      }
-    }
-
-    // Regular message (stored memory not empty, prompt already sent)
-    requestConfig.contents.push({
-      role: 'user',
-      parts: [{ text: userMessage }]
-    });
-    
-    return {
-      ...requestConfig,
-      isUsingModelMemory: false,
-      skillUsed: normalizedSkillName,
-      programmingLanguage
-    };
-  }
-
-  /**
    * Alternative method: Get separate components for manual API construction
    * @param {string} skillName - The active skill
    * @param {string} userMessage - The user's message/query
@@ -237,40 +176,6 @@ class PromptLoader {
   }
 
   /**
-   * Example usage method showing complete flow
-   * @param {string} skillName - The active skill
-   * @param {string} userMessage - User's message
-   * @param {Array} storedMemory - Current stored memory
-   * @param {string|null} programmingLanguage - Optional programming language
-   * @returns {Object} Complete flow result
-   */
-  async processUserRequest(skillName, userMessage, storedMemory, programmingLanguage = null) {
-    try {
-      // Get request components
-      const components = this.getRequestComponents(skillName, userMessage, storedMemory, programmingLanguage);
-
-      // Prepare the actual API request
-      const geminiRequest = this.prepareGeminiRequest(skillName, userMessage, storedMemory, programmingLanguage);
-      
-      return {
-        requestReady: true,
-        geminiRequest,
-        components,
-        needsMemoryUpdate: true,
-        programmingLanguage
-      };
-      
-    } catch (error) {
-      console.error('Error processing user request:', error);
-      return {
-        requestReady: false,
-        error: error.message,
-        programmingLanguage
-      };
-    }
-  }
-
-  /**
    * Check if a skill requires programming language context
    * @param {string} skillName - The skill name to check
    * @returns {boolean} True if skill requires programming language
@@ -305,7 +210,7 @@ class PromptLoader {
     if (!this.promptsLoaded) {
       this.loadPrompts();
     }
-    return ['dsa'];
+    return [...SHIPPED_SKILLS];
   }
 
   /**

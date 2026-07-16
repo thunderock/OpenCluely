@@ -39,20 +39,23 @@ class ConfigManager {
       },
 
       llm: {
-        gemini: {
-          model: 'gemini-3.1-flash-lite',
-          fallbackModels: ['gemini-2.5-flash-lite', 'gemini-3.5-flash'],
-          maxRetries: 3,
-          timeout: 30000,
-          fallbackEnabled: true,
-          enableFallbackMethod: true,
-          generation: {
-            temperature: 0.7,
-            topK: 32,
-            topP: 0.9,
-            maxOutputTokens: 4096,
-            thinkingConfig: { thinkingBudget: 0 }
-          }
+        // Provider selection (PROV-06). Local is the only engine after PROV-07
+        // removed the cloud path; the key stays env-overridable so Phase-7 CLI
+        // backends can be selected without a code change.
+        provider: process.env.LLM_PROVIDER || 'local',
+
+        // Per-provider block for the local engine. `host` is the client base
+        // URL (scheme included); LocalProvider appends '/v1', LocalModelManager
+        // derives the daemon's OLLAMA_HOST ('host:port', no scheme) from it.
+        local: {
+          host: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+          model: process.env.LOCAL_MODEL || 'qwen3-vl:8b',
+          keepAlive: -1,
+          // qwen3(-vl) reasons out loud by default; a reply-suggester wants concise,
+          // fast answers (GEN-01), so thinking is OFF by default (serialize appends the
+          // qwen3 `/no_think` soft-switch). Set LOCAL_THINK=1 to re-enable reasoning.
+          think: process.env.LOCAL_THINK === '1' || process.env.LOCAL_THINK === 'true',
+          curatedModels: ['qwen3-vl:8b', 'qwen3-vl:30b', 'gemma3:4b', 'gemma3:12b']
         }
       },
 

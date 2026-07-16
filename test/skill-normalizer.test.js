@@ -11,10 +11,10 @@ const {
 } = require('../src/core/skill-normalizer');
 
 describe('normalizeSkillName', () => {
-  test('lowercases and maps known aliases to dsa', () => {
-    assert.equal(normalizeSkillName('DSA'), 'dsa');
-    assert.equal(normalizeSkillName('algorithms'), 'dsa');
-    assert.equal(normalizeSkillName('data-structures'), 'dsa');
+  test('lowercases and folds the legacy dsa aliases into programming', () => {
+    assert.equal(normalizeSkillName('DSA'), 'programming');
+    assert.equal(normalizeSkillName('algorithms'), 'programming');
+    assert.equal(normalizeSkillName('data-structures'), 'programming');
   });
 
   test('maps ml alias to data-science', () => {
@@ -33,27 +33,27 @@ describe('normalizeSkillName', () => {
 });
 
 describe('injectProgrammingLanguage', () => {
-  test('dsa + cpp produces the DSA block with C++ and a cpp fence tag', () => {
-    const out = injectProgrammingLanguage('BASE PROMPT', 'cpp', 'dsa');
+  test('programming + cpp produces the implementation-language block with C++ and a cpp fence tag', () => {
+    const out = injectProgrammingLanguage('BASE PROMPT', 'cpp', 'programming');
     assert.ok(out.startsWith('BASE PROMPT'), 'original prompt is preserved as a prefix');
     assert.ok(out.includes('IMPLEMENTATION LANGUAGE: C++'));
     assert.ok(out.includes('```cpp'), 'uses the cpp fence tag');
     assert.ok(
       out.trimEnd().endsWith('correctness, clarity, and efficiency.'),
-      'ends with the DSA strict-requirements block'
+      'ends with the strict-requirements block'
     );
   });
 
-  test('dsa + js resolves to JavaScript with a javascript fence tag', () => {
-    const out = injectProgrammingLanguage('BASE', 'js', 'dsa');
+  test('programming + js resolves to JavaScript with a javascript fence tag', () => {
+    const out = injectProgrammingLanguage('BASE', 'js', 'programming');
     assert.ok(out.includes('JavaScript'));
     assert.ok(out.includes('```javascript'));
   });
 
-  test('non-dsa skill uses the default PROGRAMMING LANGUAGE block', () => {
+  test('non-programming skill uses the default PROGRAMMING LANGUAGE block', () => {
     const out = injectProgrammingLanguage('BASE', 'python', 'general');
     assert.ok(out.includes('PROGRAMMING LANGUAGE:'));
-    assert.ok(!out.includes('IMPLEMENTATION LANGUAGE:'), 'default case is not the DSA block');
+    assert.ok(!out.includes('IMPLEMENTATION LANGUAGE:'), 'default case is not the implementation block');
   });
 
   test('unknown languages are title-cased', () => {
@@ -63,7 +63,7 @@ describe('injectProgrammingLanguage', () => {
 });
 
 describe('SKILLS_REQUIRING_PROGRAMMING_LANGUAGE', () => {
-  test('is the single-source-of-truth list [dsa]', () => {
-    assert.deepStrictEqual(SKILLS_REQUIRING_PROGRAMMING_LANGUAGE, ['dsa']);
+  test('is the single-source-of-truth list [programming]', () => {
+    assert.deepStrictEqual(SKILLS_REQUIRING_PROGRAMMING_LANGUAGE, ['programming']);
   });
 });

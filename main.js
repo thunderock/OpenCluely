@@ -93,7 +93,7 @@ class ApplicationController {
   constructor() {
     this.isReady = false;
     this.starting = false;
-    this.activeSkill = "dsa";
+    this.activeSkill = "general";
   // Default to C++ so language is enforced from first run
   this.codingLanguage = "cpp";
     this.speechAvailable = false;
@@ -107,9 +107,9 @@ class ApplicationController {
     this._utteranceDispatchInFlight = false;
     this._utteranceCoalesceMs = 800;
 
-    // First-run onboarding: detects missing .env / API key and triggers
-    // a settings-window prompt on first launch so users don't have to
-    // dig through docs to figure out they need a Gemini API key.
+    // First-run onboarding: detects a missing .env / uncompleted setup and
+    // triggers the onboarding wizard on first launch so users are guided
+    // through local model + speech setup.
     this.firstRunManager = new FirstRunManager({
       logger: logger,
       // .env and the sentinel both live in userData so they survive cwd
@@ -122,6 +122,9 @@ class ApplicationController {
     // Lazily-initialised in getWhisperInstaller() so tests can mock
     // the constructor without polluting main-process startup.
     this._whisperInstaller = null;
+    // Local engine lifecycle (PROV-05) — lazily-initialised in
+    // getLocalModelManager() so it never runs during import/tests.
+    this._localModelManager = null;
     this.isFirstRun = false;
 
     // Window configurations for reference
@@ -277,6 +280,20 @@ class ApplicationController {
       });
 
       sessionManager.addEvent("Application started");
+
+      // Local engine (PROV-05): adopt a running Ollama or start one so the app
+      // is answer-ready. NEVER blocks startup — start() degrades gracefully and
+      // any failure here is logged so the app continues (the Local-down UX
+      // surfaces recovery). On first run we only start/adopt the daemon; the
+      // onboarding flow (03-06) drives the visible model pull, not this path.
+      try {
+        const modelStatus = await this.getLocalModelManager().start();
+        logger.info("Local model manager started", modelStatus);
+      } catch (e) {
+        logger.warn("Local model manager start failed (continuing)", {
+          error: e.message,
+        });
+      }
     } catch (error) {
       this.starting = false;
       logger.error("Application initialization failed", {
@@ -287,10 +304,9 @@ class ApplicationController {
   }
 
   setupNetworkConfiguration() {
-    // Gemini's cert-verify bypass + UA override now live inside the Gemini
-    // provider (SC3). Delegate to whichever provider is selected; a provider
-    // that needs no network hardening simply won't implement this, so the
-    // bypass disappears cleanly when Gemini is removed (Phase 3).
+    // Delegate any provider-owned network hardening to the selected provider.
+    // LocalProvider needs none, so it does not implement configureNetworkSession
+    // and this guarded delegate simply no-ops — no global cert/UA overrides run.
     const ses = session.defaultSession;
     const provider = require("./src/services/providers").getSelected();
     if (provider && typeof provider.configureNetworkSession === "function") {
@@ -580,15 +596,6 @@ class ApplicationController {
       }
     });
 
-    ipcMain.handle("set-gemini-api-key", (event, apiKey) => {
-      llmService.updateApiKey(apiKey);
-      return llmService.getStats();
-    });
-
-    ipcMain.handle("get-gemini-status", () => {
-      return llmService.getStats();
-    });
-
     // Window binding IPC handlers
     ipcMain.handle("set-window-binding", (event, enabled) => {
       return windowManager.setWindowBinding(enabled);
@@ -613,30 +620,6 @@ class ApplicationController {
     ipcMain.handle("move-bound-windows", (event, { deltaX, deltaY }) => {
       windowManager.moveBoundWindows(deltaX, deltaY);
       return windowManager.getWindowBindingStatus();
-    });
-
-    ipcMain.handle("test-gemini-connection", async () => {
-      return await llmService.testConnection();
-    });
-
-    ipcMain.handle("run-gemini-diagnostics", async () => {
-      try {
-        const connectivity = await llmService.checkNetworkConnectivity();
-        const apiTest = await llmService.testConnection();
-        
-        return {
-          success: true,
-          connectivity,
-          apiTest,
-          timestamp: new Date().toISOString()
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error.message,
-          timestamp: new Date().toISOString()
-        };
-      }
     });
 
     // Settings handlers
@@ -765,6 +748,89 @@ class ApplicationController {
       } catch (e) {
         logger.error("Whisper model download failed", { error: e.message });
         return { ok: false, message: e.message, path: null };
+      }
+    });
+
+    // ── Local model engine (PROV-05) ──
+    // Provider-neutral / local-named handlers (they outlived the cloud path
+    // removed at PROV-07). Mirrors the whisper download-progress pattern but
+    // emits STRUCTURED { status, percent } events.
+    ipcMain.handle("download-model", async (event, modelTag) => {
+      try {
+        const sender = event.sender;
+        return await this.getLocalModelManager().pullModel(
+          modelTag || config.get("llm.local.model"),
+          {
+            onProgress: (p) => {
+              try { sender.send("model-pull-progress", p); } catch (_) { /* ignore */ }
+            },
+          },
+        );
+      } catch (e) {
+        logger.error("Model pull failed", { error: e.message });
+        return { ok: false, message: e.message };
+      }
+    });
+
+    ipcMain.handle("get-model-status", async (_event, opts) => {
+      try {
+        // opts.probeResponds:false → fast detection path (no model generate); the
+        // onboarding serverUp gate uses it so it never blocks on "Probing".
+        return await this.getLocalModelManager().getStatus(opts);
+      } catch (e) {
+        return { serverUp: false, error: e.message };
+      }
+    });
+
+    ipcMain.handle("list-installed-models", async () => {
+      try {
+        return await this.getLocalModelManager().listInstalledModels();
+      } catch (_) {
+        return [];
+      }
+    });
+
+    ipcMain.handle("model-preflight", async () => {
+      try {
+        return await this.getLocalModelManager().preflight();
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    });
+
+    // Local-down recovery (03-06 UX). action: 'restart' → start() only when WE
+    // own the daemon (an adopted daemon isn't ours to restart — surface status
+    // so the UI guides the user); 'repull' → re-pull the model with progress;
+    // anything else → just report status.
+    ipcMain.handle("recover-model", async (event, action) => {
+      try {
+        const manager = this.getLocalModelManager();
+        if (action === "restart") {
+          const status = await manager.getStatus();
+          return status.owned ? await manager.start() : status;
+        }
+        if (action === "repull") {
+          const sender = event.sender;
+          return await manager.pullModel(config.get("llm.local.model"), {
+            onProgress: (p) => {
+              try { sender.send("model-pull-progress", p); } catch (_) { /* ignore */ }
+            },
+          });
+        }
+        return await manager.getStatus();
+      } catch (e) {
+        logger.error("Model recovery failed", { action, error: e.message });
+        return { ok: false, error: e.message };
+      }
+    });
+
+    // Provider-neutral connection test (survives PROV-07; llmService is the
+    // registry-selected provider — Local, the sole engine after removal).
+    ipcMain.handle("test-provider-connection", async () => {
+      try {
+        return await llmService.testConnection();
+      } catch (e) {
+        return { success: false, error: e.message };
       }
     });
 
@@ -958,7 +1024,8 @@ class ApplicationController {
 
   navigateSkill(direction) {
     const availableSkills = [
-      "dsa",
+      "general",
+      "programming",
     ];
 
     const currentIndex = availableSkills.indexOf(this.activeSkill);
@@ -1016,7 +1083,7 @@ class ApplicationController {
       // Use image directly with LLM and active skill; do not send chat messages here
       const sessionHistory = sessionManager.getOptimizedHistory();
 
-      const skillsRequiringProgrammingLanguage = ['dsa'];
+      const skillsRequiringProgrammingLanguage = ['programming'];
       const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
 
       this._responseSeq = (this._responseSeq || 0) + 1;
@@ -1082,7 +1149,7 @@ class ApplicationController {
       sessionManager.addUserInput(text, 'llm_input');
 
       // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['dsa'];
+      const skillsRequiringProgrammingLanguage = ['programming'];
       const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
 
       this._responseSeq = (this._responseSeq || 0) + 1;
@@ -1244,7 +1311,7 @@ class ApplicationController {
       });
 
       // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['dsa'];
+      const skillsRequiringProgrammingLanguage = ['programming'];
       const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
 
       // Stream the answer so it renders progressively in the chat + overlay.
@@ -1445,6 +1512,14 @@ class ApplicationController {
     globalShortcut.unregisterAll();
     windowManager.destroyAllWindows();
 
+    // Stop the local engine only if WE own it — supervisor.stop() no-ops for an
+    // adopted daemon (we never kill an Ollama we didn't start). Fire-and-forget:
+    // quit must not wait on a graceful SIGTERM race.
+    try {
+      const stopping = this.getLocalModelManager().stop();
+      if (stopping && typeof stopping.catch === "function") stopping.catch(() => {});
+    } catch (_) { /* best effort */ }
+
     const sessionStats = sessionManager.getMemoryUsage();
     logger.info("Application shutting down", {
       sessionEvents: sessionStats.eventCount,
@@ -1465,6 +1540,17 @@ class ApplicationController {
     return this._whisperInstaller;
   }
 
+  // Local engine (PROV-05): adopts/owns the Ollama daemon, ensures the
+  // configured model, keeps it resident, and reports owned/adopted + health.
+  // Lazily constructed so import-time and tests never touch Ollama.
+  getLocalModelManager() {
+    if (!this._localModelManager) {
+      const LocalModelManager = require("./src/core/local-model.manager");
+      this._localModelManager = new LocalModelManager();
+    }
+    return this._localModelManager;
+  }
+
   getSettings() {
     // Surface every value the settings UI can edit, reading the live source
     // of truth (process.env) so the UI shows exactly what the running app is
@@ -1472,7 +1558,7 @@ class ApplicationController {
     // distinguish "unset" from "stale value from a previous load".
     return {
       codingLanguage: this.codingLanguage || "cpp",
-      activeSkill: this.activeSkill || "dsa",
+      activeSkill: this.activeSkill || "general",
       appIcon: this.appIcon || "terminal",
       selectedIcon: this.appIcon || "terminal",
       windowGap: windowManager.windowGap,
@@ -1484,7 +1570,13 @@ class ApplicationController {
       whisperModel: process.env.WHISPER_MODEL || "turbo",
       whisperLanguage: process.env.WHISPER_LANGUAGE || "en",
       whisperSegmentMs: process.env.WHISPER_SEGMENT_MS || "4000",
-      geminiKey: process.env.GEMINI_API_KEY || "",
+
+      // AI model engine (PROV-06). Read from config so the UI reflects the live
+      // provider/model resolution (config derives these from LLM_PROVIDER /
+      // LOCAL_MODEL in .env).
+      provider: config.get("llm.provider"),
+      model: config.get("llm.local.model"),
+      curatedModels: config.get("llm.local.curatedModels"),
 
       azureConfigured: !!process.env.AZURE_SPEECH_KEY && !!process.env.AZURE_SPEECH_REGION,
       speechAvailable: this.speechAvailable
@@ -1544,8 +1636,16 @@ class ApplicationController {
       if (settings.whisperSegmentMs !== undefined) {
         envUpdates.WHISPER_SEGMENT_MS = String(settings.whisperSegmentMs);
       }
-      if (settings.geminiKey !== undefined) {
-        envUpdates.GEMINI_API_KEY = settings.geminiKey;
+
+      // AI model engine (PROV-06). Persist to .env so the selection survives a
+      // restart and is applied on next launch: the provider facade resolves the
+      // selected provider at module load, so this is restart-to-apply (no live
+      // hot-swap), matching the app's other .env-backed settings.
+      if (settings.provider === "local") {
+        envUpdates.LLM_PROVIDER = settings.provider;
+      }
+      if (settings.model !== undefined) {
+        envUpdates.LOCAL_MODEL = settings.model;
       }
 
       // Capture the previous whisper command BEFORE persisting — persistEnvUpdates
@@ -1556,20 +1656,12 @@ class ApplicationController {
 
       const persistedKeys = this.persistEnvUpdates(envUpdates);
 
-      // If the Gemini key was just saved, reinitialize the LLM service
-      // so the new client picks up the key. Without this, the test-
-      // connection button in the onboarding wizard fails with
-      // "Service not initialized" because the client was first created
-      // at app startup, before any key was set.
-      if (settings.geminiKey !== undefined && envUpdates.GEMINI_API_KEY !== undefined) {
-        try {
-          llmService.initializeClient();
-          logger.info("LLM service reinitialized after Gemini key update");
-        } catch (e) {
-          logger.warn("Failed to reinitialize LLM service after Gemini key update", {
-            error: e.message
-          });
-        }
+      if (settings.provider !== undefined || settings.model !== undefined) {
+        // Meta only — no live provider hot-swap; the switch applies on next launch.
+        logger.info("LLM provider/model updated", {
+          provider: settings.provider,
+          model: settings.model,
+        });
       }
 
       // Reinitialize speech service when provider OR whisper command
