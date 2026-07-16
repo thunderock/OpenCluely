@@ -35,6 +35,7 @@ Progress: [███░░░░░░░] Milestone v1.0 — 3 of 9 phases COMP
 - Trend: → steady (Waves 1-3 all parallel + pathspec-safe; full local engine built, integrates green 83/83; next = human checkpoints)
 
 *Updated after each plan completion*
+| Phase 04 P02 | 14 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,7 @@ Load-bearing sequencing decisions driving this roadmap:
 - Phase 1: ESLint 9 flat config (`eslint.config.js`, FND-02 lint half) is the whole-repo gate — lean error-only ruleset (`no-undef` + lenient `no-unused-vars` with `caughtErrors:'none'`), per-env files blocks (Node/CommonJS vs renderer `script` with browser + app-injected globals incl. `require` for chat-window dual-load), vendored/standalone dirs ignored but hand-written `lib/mathrender.js` linted. `eslint@^9` + `globals` are committed devDeps with a synced lockfile (npm-ci parity). `npx eslint .` is the exact gate 01-05's Makefile/CI will invoke; repo made green surgically (dead-code removal + `_`-prefixed unused args + removed stale disable directives), no mass reformat (plan 01-04).
 
 - Phase 1: Developer commands + CI gate wired (FND-03 + FND-02 CI half). `Makefile` has exactly the four locked tab-indented targets — `setup`/`setup-dev` (`npm ci`, reproducible from the committed lockfile), `run_tests` (`node --test test/*.test.js` — single-* glob so `test/fixtures/**` is never run as a test; never the bare `test/` dir), `lint` (`npx eslint .`). New `.github/workflows/ci.yml` (separate from the tag-only `release.yml`) gates lint + tests on `pull_request` + `push:main` across an ubuntu+macOS matrix on Node 20 using `npm ci --ignore-scripts` (skips the ~100MB Electron download — the lint/test job needs neither). Local == CI (same `npx eslint .` + `node --test`). SC1 verified end-to-end (38/38 tests, lint exit 0; setup/setup-dev confirmed non-destructively via recipe correctness + installed deps + `npm ci --dry-run` lockfile parity — no reinstall/Electron download); SC2 acceptance shape demonstrated locally (an intentional `no-undef` violation exits `npx eslint .` non-zero, then reverted). Real CI-on-a-PR confirmation pending the user's first push (delivery policy: never push automatically). Plan 01-05 — Phase 1 complete.
+- [Phase 04]: 04-02 (STT-02/SC2): ggml model downloader shipped — resumable HTTP Range + SHA256/size verify + atomic-rename-after-verify into <userData>/.whisper-models/; structured progress; friendly offline/disk-full; pinned checksum table; no venv/pip. 7 network-free node:test, 103/103 suite. Commits f6e9d85/6f8fe57.
 
 ### Pending Todos
 
@@ -109,6 +111,7 @@ Deferred (captured, not blocking):
 
 ## Session Continuity
 
-Last session: 2026-07-15
+Last session: 2026-07-16 — Phase 4 EXECUTING (wave 1, parallel). 04-02 (ggml model downloader, STT-02/SC2) COMPLETE: src/core/whisper-model-downloader.js + test (commits f6e9d85 feat, 6f8fe57 test); resumable HTTP Range + SHA256/size verify + atomic-rename into <userData>/.whisper-models/; friendly offline/disk-full; no venv/pip. 103/103 tests; my 2 files eslint-clean. DEFERRED (04-01's to close): whole-repo `make lint` blocked by 04-01's vendored `resources/.whisper-cpp-src/**` needing an eslint ignore — see phase deferred-items.md. (04-01 runs concurrently.) Prior-session detail below.
+Last session (Phase 3): 2026-07-15
 Stopped at: Phase 3 COMPLETE & VERIFIED (2026-07-15). All 8 plans executed + SUMMARYs. 03-08 removed Gemini behind the hard-approval gate (user "approved"): @google/genai + gemini.provider.js (cert-bypass/UA) + registry/config/IPC/preload/modal/settings/onboarding + goldens/parity (fb8bfd8, c435f17); gap-closure dropped dead Gemini methods from prompt-loader.js (0a36624). Independent gsd-verifier PASSED (6/6 must-haves in code) + user-confirmed live post-removal boot (overlay + 3 entry points answer on Local, voice inits). ROADMAP + REQUIREMENTS (PROV-03..07 + GEN-01) + STATE marked complete; 03-VERIFICATION.md status=passed. 96/96 tests, eslint 0. Branch gsd/phase-03-local-engine-cloud-removal — all commits local/unpushed — AWAITING Ashutosh to merge → main + push (never auto).
 Resume file: after Ashutosh merges the branch → main: (1) POST-MERGE MEMORY STEP — capture Phase 3 learnings into GLOBAL memory (edit the source in ashutosh_setup/setup/memory/, not just deployed ~/.claude/memory/) AND refresh repo ./MEMORY.md — its Gemini-path notes (lines ~14-16) are now STALE and must be rewritten to the Local-first path (facade → LocalProvider → RequestBuilder → /v1); (2) branch Phase 4 off freshly-merged main, then /gsd:plan-phase 4 (Continuous Hearing — resident whisper.cpp STT + ambient listening; also removes Azure STT-05 SDK + the ~380-line browser-DOM polyfill). OPEN DECISIONS: Phase 6 — qwen3-vl over-reasons on heavy prompts (slow time-to-first-content) → accept vs. switch default to a non-reasoning curated model (gemma3). Residual Gemini COPY in setup.sh/README/release.yml/webapp → Phase 8/9.
