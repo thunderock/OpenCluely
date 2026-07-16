@@ -412,8 +412,14 @@ class ApplicationController {
       });
     });
 
-    speechService.on("transcription", (text) => {
-      this.handleTranscriptionFragment(text);
+    speechService.on("transcription", (payload) => {
+      // The flush now emits { text, source:'mic'|'system' } (04-04). Stay
+      // tolerant of a bare string (Azure path / any legacy emit) → treat as mic.
+      if (typeof payload === "string") {
+        this.handleTranscriptionFragment({ text: payload, source: "mic" });
+      } else {
+        this.handleTranscriptionFragment(payload || {});
+      }
     });
 
     speechService.on("interim-transcription", (text) => {
@@ -1298,16 +1304,22 @@ class ApplicationController {
    * asked once the speaker has actually paused — this is what stops one spoken
    * line from producing two separate, slow answers.
    */
-  handleTranscriptionFragment(text) {
+  handleTranscriptionFragment({ text, source } = {}) {
     const fragment = (text || "").trim();
     if (!fragment) {
       return;
     }
+    // Channel tag threaded from the flush ('mic'|'system'); default 'mic' for a
+    // bare/legacy emit. Phase 4 only PRESERVES the tag end-to-end (no mic/system
+    // fusion or dedup — deferred to Phase 6).
+    const channel = source === "system" ? "system" : "mic";
 
-    // Show the live transcript right away in all windows.
-    sessionManager.addUserInput(fragment, 'speech');
+    // Show the live transcript right away in all windows. addUserInput's 2nd arg
+    // stays the input-KIND ('speech'); the audio channel rides as SEPARATE
+    // metadata so the input-kind param is never overloaded.
+    sessionManager.addUserInput(fragment, 'speech', { channel });
     BrowserWindow.getAllWindows().forEach((window) => {
-      window.webContents.send("transcription-received", { text: fragment });
+      window.webContents.send("transcription-received", { text: fragment, source: channel });
     });
 
     this._utteranceBuffer = this._utteranceBuffer
