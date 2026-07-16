@@ -415,21 +415,62 @@ class SpeechService extends EventEmitter {
     this.available = false;
     this.provider = 'disabled';
     this.runtimeSettings = {};
-    this.segmentBuffers = [];
-    this.segmentBytes = 0;
     this.segmentTimer = null;
-    this.transcriptionInFlight = false;
-    this.pendingFlush = false;
-    this.pendingFinal = false;
     this.audioProgram = null;
     // Injected by main.js after the resident whisper-server is started (04-03).
     // NEVER constructed here: the module export is a singleton and importing it
     // (including in tests) must never spawn a server.
     this.whisperServerManager = null;
-    this._segmenter = new VadSegmenter();
+
+    // Two independent per-channel pipelines (STT-04): the mic renderer path and
+    // the macOS system-audio tap path (04-05), each with its own VadSegmenter +
+    // buffers + flush serialization so a mic flush in-flight never strands a
+    // system utterance and vice-versa. Both SHARE one VAD tuning block (read via
+    // the _get*() getters) — do NOT diverge the tuning. The system channel stays
+    // dormant until its tap enables it, so the mic-only path is unchanged.
+    this.systemChannelEnabled = false;
+    this._channels = {
+      mic: this._makeChannel('mic'),
+      system: this._makeChannel('system'),
+    };
     this._resetVadState();
 
     this.initializeClient();
+  }
+
+  /**
+   * One independent capture→segment→flush pipeline. Created twice (mic +
+   * system). Holds its own VadSegmenter + segment buffers + the
+   * inFlight/pendingFlush/pendingFinal serialization so the two channels
+   * transcribe independently against the same resident whisper-server. Both
+   * channels read ONE shared VAD tuning block (the _get*() getters); the two
+   * segmenter instances are intentionally identical for Phase 4. NOTE:
+   * system/line-level audio MAY want a per-channel vadEnergyFloor override in a
+   * future tuning pass — do NOT diverge now (locked).
+   */
+  _makeChannel(source) {
+    return {
+      source,
+      segmenter: new VadSegmenter(),
+      buffers: [],
+      bytes: 0,
+      inFlight: false,
+      pendingFlush: false,
+      pendingFinal: false,
+      vadSpeaking: false,
+      vadSpeechMs: 0,
+      vadLastChunkAt: 0,
+    };
+  }
+
+  /**
+   * Enable/disable the system-audio channel. 04-05's SystemAudioTapManager
+   * flips this on once the macOS Core Audio process tap is capturing; until
+   * then handleSystemAudioChunk is a no-op and the mic path is the only active
+   * pipeline.
+   */
+  setSystemChannelEnabled(enabled) {
+    this.systemChannelEnabled = !!enabled;
   }
 
   initializeClient() {
@@ -731,11 +772,7 @@ class SpeechService extends EventEmitter {
   _startWhisperRecording() {
     this._cleanup();
     this.isRecording = true;
-    this.segmentBuffers = [];
-    this.segmentBytes = 0;
-    this.transcriptionInFlight = false;
-    this.pendingFlush = false;
-    this.pendingFinal = false;
+    this._resetChannelBuffers();
     this._resetVadState();
     this.emit('recording-started');
     this.emit('status', 'Local Whisper recording started');
@@ -774,12 +811,26 @@ class SpeechService extends EventEmitter {
    * both the renderer (Web Audio) and native (sox/arecord) capture paths.
    */
   _resetVadState() {
-    // Legacy (VAD-disabled) path + watchdog still read these; the full
-    // speech/silence/noise-floor/pre-roll state now lives in this._segmenter.
-    this.vadSpeaking = false;        // currently inside an utterance
-    this.vadSpeechMs = 0;            // accumulated voiced audio in this segment
-    this.vadLastChunkAt = 0;         // timestamp of the last ingested chunk
-    this._segmenter.reset();
+    // Reset the VAD state machine for BOTH channels. The legacy (VAD-disabled)
+    // path + watchdog read the per-channel vad* scalars; the full
+    // speech/silence/noise-floor/pre-roll state lives in each channel.segmenter.
+    for (const channel of Object.values(this._channels)) {
+      channel.vadSpeaking = false;      // currently inside an utterance
+      channel.vadSpeechMs = 0;          // accumulated voiced audio in this segment
+      channel.vadLastChunkAt = 0;       // timestamp of the last ingested chunk
+      channel.segmenter.reset();
+    }
+  }
+
+  /** Reset the segment buffers + flush serialization for BOTH channels. */
+  _resetChannelBuffers() {
+    for (const channel of Object.values(this._channels)) {
+      channel.buffers = [];
+      channel.bytes = 0;
+      channel.inFlight = false;
+      channel.pendingFlush = false;
+      channel.pendingFinal = false;
+    }
   }
 
   /**
@@ -796,25 +847,38 @@ class SpeechService extends EventEmitter {
       if (!this.isRecording || this.provider !== 'whisper') {
         return;
       }
-
-      // VAD disabled (fallback): preserve the legacy fixed-window behaviour by
-      // flushing once the accumulated audio reaches the configured segment size.
-      if (!this._isVadEnabled()) {
-        if (this.segmentBytes && this.vadSpeechMs >= this._getWhisperSegmentMs()) {
-          this._endUtteranceFlush();
-        }
-        return;
-      }
-
-      // If we're mid-utterance and no audio has arrived recently, the mic may
-      // have stalled — flush what we captured rather than holding it forever.
-      const sinceLastChunk = this.vadLastChunkAt ? Date.now() - this.vadLastChunkAt : 0;
-      const stalled = this._segmenter.speaking && sinceLastChunk > 1500;
-      const tooLong = this._segmenter.speaking && this._segmenter.speechMs >= this._getMaxUtteranceMs();
-      if (stalled || tooLong) {
-        this._endUtteranceFlush();
+      // Backstop each channel independently (stall + max-utterance cap).
+      for (const channel of Object.values(this._channels)) {
+        this._watchdogTickChannel(channel);
       }
     }, 500);
+  }
+
+  /** Per-channel watchdog tick: flush a stalled or over-long utterance. */
+  _watchdogTickChannel(channel) {
+    // The system channel only ticks once its tap is enabled; the mic channel
+    // always ticks (mic behaviour unchanged).
+    if (channel.source === 'system' && !this.systemChannelEnabled) {
+      return;
+    }
+
+    // VAD disabled (fallback): preserve the legacy fixed-window behaviour by
+    // flushing once the accumulated audio reaches the configured segment size.
+    if (!this._isVadEnabled()) {
+      if (channel.bytes && channel.vadSpeechMs >= this._getWhisperSegmentMs()) {
+        this._endUtteranceFlush(channel);
+      }
+      return;
+    }
+
+    // If we're mid-utterance and no audio has arrived recently, the source may
+    // have stalled — flush what we captured rather than holding it forever.
+    const sinceLastChunk = channel.vadLastChunkAt ? Date.now() - channel.vadLastChunkAt : 0;
+    const stalled = channel.segmenter.speaking && sinceLastChunk > 1500;
+    const tooLong = channel.segmenter.speaking && channel.segmenter.speechMs >= this._getMaxUtteranceMs();
+    if (stalled || tooLong) {
+      this._endUtteranceFlush(channel);
+    }
   }
 
   /**
@@ -829,7 +893,25 @@ class SpeechService extends EventEmitter {
       return;
     }
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    this._ingestWhisperAudio(buffer);
+    this._ingestWhisperAudio(buffer, this._channels.mic);
+  }
+
+  /**
+   * Ingest path for the macOS system-audio tap (STT-04). 04-05's
+   * SystemAudioTapManager feeds raw 16 kHz mono 16-bit PCM here; gated on
+   * recording + systemChannelEnabled so the mic-only path is untouched until
+   * the tap lands. Drives the SECOND VadSegmenter + segment pipeline →
+   * whisper-server → transcript tagged source:'system'.
+   */
+  handleSystemAudioChunk(buffer) {
+    if (!this.isRecording || this.provider !== 'whisper' || !this.systemChannelEnabled) {
+      return;
+    }
+    if (!buffer || !buffer.length) {
+      return;
+    }
+    const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+    this._ingestWhisperAudio(buf, this._channels.system);
   }
 
   /**
@@ -838,26 +920,27 @@ class SpeechService extends EventEmitter {
    * once a natural pause (trailing silence) is detected. Falls back to plain
    * buffering when VAD is disabled.
    */
-  _ingestWhisperAudio(buffer) {
+  _ingestWhisperAudio(buffer, channel = this._channels.mic) {
     if (!buffer || !buffer.length) {
       return;
     }
 
     if (!this._isVadEnabled()) {
       // Legacy behaviour: the watchdog/max-utterance cap drives flushing.
-      this.segmentBuffers.push(buffer);
-      this.segmentBytes += buffer.length;
-      this.vadSpeaking = true;
-      this.vadSpeechMs += this._chunkDurationMs(buffer);
-      this.vadLastChunkAt = Date.now();
+      channel.buffers.push(buffer);
+      channel.bytes += buffer.length;
+      channel.vadSpeaking = true;
+      channel.vadSpeechMs += this._chunkDurationMs(buffer);
+      channel.vadLastChunkAt = Date.now();
       return;
     }
 
-    this.vadLastChunkAt = Date.now();
+    channel.vadLastChunkAt = Date.now();
     // Building the tuning object from the getters each call preserves the
-    // original per-chunk re-read of settings. The segmenter owns the VAD
+    // original per-chunk re-read of settings. BOTH channels read this ONE
+    // shared tuning block (locked). The channel's segmenter owns the VAD
     // decision and returns an action; buffer storage stays here.
-    const action = this._segmenter.ingest(buffer, {
+    const action = channel.segmenter.ingest(buffer, {
       energyFloor: this._getVadEnergyFloor(),
       silenceHangoverMs: this._getSilenceHangoverMs(),
       minUtteranceMs: this._getMinUtteranceMs(),
@@ -865,25 +948,25 @@ class SpeechService extends EventEmitter {
       preRollMs: this._getPreRollMs(),
     });
     for (const buf of action.buffers) {
-      this.segmentBuffers.push(buf);
-      this.segmentBytes += buf.length;
+      channel.buffers.push(buf);
+      channel.bytes += buf.length;
     }
     if (action.type === 'flush') {
-      this._endUtteranceFlush();
+      this._endUtteranceFlush(channel);
     } else if (action.type === 'discard') {
       // Net-identical to the original push-then-clear: drop the whole segment.
-      this.segmentBuffers = [];
-      this.segmentBytes = 0;
+      channel.buffers = [];
+      channel.bytes = 0;
     }
   }
 
   /** Flush the accumulated utterance and reset VAD for the next one. */
-  _endUtteranceFlush() {
-    this.vadSpeaking = false;
-    this.vadSpeechMs = 0;
-    this._segmenter.endUtterance();
-    this._flushWhisperSegment({ final: false }).catch((error) => {
-      logger.error('Whisper segment transcription failed', { error: error.message });
+  _endUtteranceFlush(channel = this._channels.mic) {
+    channel.vadSpeaking = false;
+    channel.vadSpeechMs = 0;
+    channel.segmenter.endUtterance();
+    this._flushWhisperSegment({ final: false }, channel).catch((error) => {
+      logger.error('Whisper segment transcription failed', { error: error.message, source: channel.source });
     });
   }
 
@@ -945,7 +1028,13 @@ class SpeechService extends EventEmitter {
     }
 
     try {
-      await this._flushWhisperSegment({ final: true });
+      // Finalise BOTH channels. The system channel is empty (no bytes) when its
+      // tap is disabled, so this is a no-op there and the mic flush is unchanged.
+      await Promise.all(
+        Object.values(this._channels).map((channel) =>
+          this._flushWhisperSegment({ final: true }, channel)
+        )
+      );
     } catch (error) {
       logger.error('Final Whisper transcription failed', { error: error.message });
       this.emit('error', `Whisper transcription failed: ${error.message}`);
@@ -1009,11 +1098,7 @@ class SpeechService extends EventEmitter {
       this.pushStream = null;
     }
 
-    this.segmentBuffers = [];
-    this.segmentBytes = 0;
-    this.transcriptionInFlight = false;
-    this.pendingFlush = false;
-    this.pendingFinal = false;
+    this._resetChannelBuffers();
     this._resetVadState();
     this._audioDataLogged = false;
     this.useRendererCapture = false;
@@ -1387,33 +1472,35 @@ class SpeechService extends EventEmitter {
     }
 
     if (this.provider === 'whisper') {
-      this._ingestWhisperAudio(Buffer.from(chunk));
+      this._ingestWhisperAudio(Buffer.from(chunk), this._channels.mic);
     }
   }
 
-  async _flushWhisperSegment({ final }) {
-    if (this.transcriptionInFlight) {
+  async _flushWhisperSegment({ final }, channel = this._channels.mic) {
+    if (channel.inFlight) {
       // A flush was requested while a transcription is still running. Record
       // that we owe a follow-up flush for ANY request (not just a final one),
       // otherwise an utterance that ended mid-transcription stays stranded in
       // the buffer until the next utterance ends or the session stops. Track
-      // final-ness separately so a queued stop still finalises correctly.
-      this.pendingFlush = true;
+      // final-ness separately so a queued stop still finalises correctly. This
+      // serialization is PER CHANNEL: a mic flush in-flight never strands a
+      // system utterance and vice-versa.
+      channel.pendingFlush = true;
       if (final) {
-        this.pendingFinal = true;
+        channel.pendingFinal = true;
       }
       return;
     }
 
-    if (!this.segmentBytes) {
+    if (!channel.bytes) {
       return;
     }
 
-    const audioBuffer = Buffer.concat(this.segmentBuffers, this.segmentBytes);
-    this.segmentBuffers = [];
-    this.segmentBytes = 0;
+    const audioBuffer = Buffer.concat(channel.buffers, channel.bytes);
+    channel.buffers = [];
+    channel.bytes = 0;
 
-    this.transcriptionInFlight = true;
+    channel.inFlight = true;
 
     try {
       // STT-01/SC1: transcribe against the RESIDENT whisper-server — no
@@ -1434,19 +1521,22 @@ class SpeechService extends EventEmitter {
       const clean = transcript ? transcript.trim() : '';
       // THIRD gate: the phrase-list hallucination filter still guards
       // emit('transcription') (VAD segmenter → no_speech_prob>0.6 → this).
+      // Tag every transcript with its channel so the sink can thread
+      // source:'mic'|'system' end-to-end (Phase 6 consumes the tag; Phase 4
+      // only preserves it).
       if (clean && !this._isHallucinatedTranscript(clean)) {
-        this.emit('transcription', clean);
+        this.emit('transcription', { text: clean, source: channel.source });
       } else if (clean) {
-        logger.debug('Dropped likely Whisper silence hallucination', { transcript: clean });
+        logger.debug('Dropped likely Whisper silence hallucination', { transcript: clean, source: channel.source });
       }
     } finally {
-      this.transcriptionInFlight = false;
+      channel.inFlight = false;
 
-      if (this.pendingFlush) {
-        this.pendingFlush = false;
-        const runFinal = this.pendingFinal;
-        this.pendingFinal = false;
-        await this._flushWhisperSegment({ final: runFinal });
+      if (channel.pendingFlush) {
+        channel.pendingFlush = false;
+        const runFinal = channel.pendingFinal;
+        channel.pendingFinal = false;
+        await this._flushWhisperSegment({ final: runFinal }, channel);
       }
     }
   }
