@@ -33,7 +33,7 @@ Requirements for this milestone. Each maps to a roadmap phase.
 - [ ] **STT-01**: Speech-to-text runs against a resident whisper.cpp engine — each VAD segment transcribes with no per-utterance process spawn / cold-start
 - [ ] **STT-02**: The STT model downloads and caches locally with visible progress on first run
 - [ ] **STT-03**: A continuous "ambient listening" mode keeps the audio stream open from launch to quit, transcribing on VAD-detected natural pauses (reusing the existing VAD + hallucination filter)
-- [ ] **STT-04**: On macOS the app captures system (loopback) audio via ScreenCaptureKit as a separate channel from the mic, so a question asked by the other party is transcribed
+- [ ] **STT-04**: On macOS the app captures system (loopback) audio via a Core Audio Process Tap (macOS 14.4+; mic-only below the floor) as a separate channel from the mic, so a question asked by the other party is transcribed
 - [ ] **STT-05**: The Azure Speech SDK and its ~380-line browser-DOM polyfill are fully removed (deferred from Phase 3 — Azure is STT-only; kept through Phase 3 so voice keeps working, deleted alongside the resident-STT replacement)
 
 ### Continuous Mode (CONT)

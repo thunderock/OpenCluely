@@ -82,7 +82,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. Each VAD segment transcribes against a resident whisper.cpp engine with no per-utterance process/model spawn or cold-start — the Python subprocess + venv path is deleted.
   2. On first run the STT model downloads and caches locally with visible progress.
   3. The app keeps the audio stream open from launch to quit (ambient listening), transcribing on VAD-detected natural pauses using the existing VAD + hallucination filter.
-  4. On macOS, audio from the other party (system/loopback via ScreenCaptureKit) is transcribed as a separate channel from the mic, so a question you only *hear* is captured.
+  4. On macOS, audio from the other party (system/loopback via a macOS Core Audio Process Tap, macOS 14.4+; mic-only below the floor) is transcribed as a separate channel from the mic, so a question you only *hear* is captured.
   5. Two minutes of silence produces zero transcripts (the silence-hallucination filter holds under always-on).
   6. The Azure Speech SDK and its browser-DOM polyfill are fully removed (deferred here from Phase 3 — Azure is STT-only, kept through Phase 3 so voice never breaks; deleted once the resident whisper.cpp engine replaces it).
 **Plans**: TBD (derived in /gsd:plan-phase) — RESEARCH FLAG: in-process `smart-whisper` vs supervised `whisper-server`; validate native-addon ABI against Electron 29 early
