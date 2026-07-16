@@ -837,28 +837,30 @@
                 </div>
             </section>
 
-            <!-- SCREEN 4: Whisper install (only shown when whisper chosen) -->
+            <!-- SCREEN 4: Voice engine check (only shown when whisper chosen).
+                 The resident whisper.cpp engine ships with the app — no Python
+                 detect/install step. We only confirm the binary is present. -->
             <section class="screen" data-screen="whisper">
-                <h1>Local Whisper Setup</h1>
+                <h1>Local Voice Engine</h1>
                 <p class="subtitle" id="whisperSubtitle">
-                    Detecting your Whisper installation…
+                    Checking the built-in whisper.cpp voice engine…
                 </p>
 
                 <div class="detect-row" id="detectRow">
                     <div>
-                        <div style="font-size:11px; color: var(--text-faint); margin-bottom:2px;">Detected command</div>
-                        <code id="detectCmd">scanning…</code>
+                        <div style="font-size:11px; color: var(--text-faint); margin-bottom:2px;">Voice engine</div>
+                        <code id="detectCmd">checking…</code>
                     </div>
                     <div id="detectStatus" class="status-pill idle">
                         <i class="fas fa-circle-notch fa-spin"></i>
-                        <span class="text">Probing</span>
+                        <span class="text">Checking</span>
                     </div>
                 </div>
 
                 <div class="install-card" id="installCard">
                     <div class="install-title">
                         <i class="fas fa-circle-info"></i>
-                        <span id="installCardTitle">What we'll do</span>
+                        <span id="installCardTitle">How local voice input works</span>
                     </div>
                     <ul class="install-list" id="installList"></ul>
                 </div>
@@ -866,17 +868,17 @@
                 <div class="install-log" id="installLog"></div>
             </section>
 
-            <!-- SCREEN 5: Whisper Model Download -->
+            <!-- SCREEN 5: Voice Model Download (ggml-small.en) -->
             <section class="screen" data-screen="model-download">
-                <h1>Whisper Model Download</h1>
+                <h1>Voice Model Download</h1>
                 <p class="subtitle" id="modelDownloadSubtitle">
-                    The Whisper transcription model needs to be downloaded before first use.
+                    Download the <code>ggml-small.en</code> English voice model (~488 MB). It's cached on your machine, resumes if interrupted, and works offline afterward.
                 </p>
 
                 <div class="install-card" id="modelDownloadCard">
                     <div class="install-title">
                         <i class="fas fa-circle-info"></i>
-                        <span id="modelDownloadTitle">Choose when to download the model</span>
+                        <span id="modelDownloadTitle">Choose when to download the voice model</span>
                     </div>
                     <div class="choice-list" id="modelDownloadChoices">
                         <div class="choice-card" data-value="now">
@@ -884,7 +886,7 @@
                             <div class="choice-text">
                                 <div class="choice-title">Download Now</div>
                                 <div class="choice-desc">
-                                    Download the <code>turbo</code> model (~150 MB) now so it's ready when you need it. Recommended.
+                                    Download the <code>ggml-small.en</code> voice model (~488 MB) now so it's ready when you need it. Recommended.
                                 </div>
                             </div>
                             <div class="choice-radio"></div>
@@ -899,6 +901,18 @@
                             </div>
                             <div class="choice-radio"></div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Structured download progress (mirrors the model-pull bar plumbing);
+                     driven from p.percent by startModelDownload over install-progress. -->
+                <div class="install-card" id="modelDownloadProgressCard">
+                    <div class="install-title">
+                        <i class="fas fa-cube"></i>
+                        <span id="modelDownloadStatus">Waiting to start…</span>
+                    </div>
+                    <div class="progress-track">
+                        <div class="progress-fill" id="modelDownloadBar"></div>
                     </div>
                 </div>
 
