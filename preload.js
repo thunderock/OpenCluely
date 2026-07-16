@@ -42,9 +42,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   completeFirstRun: () => ipcRenderer.invoke('complete-first-run'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   closeOnboarding: () => ipcRenderer.invoke('close-onboarding'),
-  detectWhisper: () => ipcRenderer.invoke('detect-whisper'),
-  installWhisper: () => ipcRenderer.invoke('install-whisper'),
+  // Resident STT engine (STT-01/STT-02). The Python detect/install bridges are
+  // gone (their handlers were deleted); the ggml model download + structured
+  // progress reuse the same `install-progress` channel. getWhisperStatus /
+  // recoverWhisper mirror getModelStatus / recoverModel for the voice engine.
   downloadWhisperModel: (modelName) => ipcRenderer.invoke('download-whisper-model', modelName),
+  getWhisperStatus: (opts) => ipcRenderer.invoke('get-whisper-status', opts),
+  recoverWhisper: (action) => ipcRenderer.invoke('whisper-recover', action),
   onInstallProgress: (callback) => {
     const wrapped = (_event, line) => {
       try { callback(line); } catch (e) { console.error('onInstallProgress error:', e); }

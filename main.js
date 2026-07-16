@@ -61,12 +61,13 @@ const config = require("./src/core/config");
 const FirstRunManager = require("./src/core/first-run");
 
 // ── Global crash guard ──
-// The speech path spawns external processes (Whisper CLI, and on macOS/Linux
-// the sox/rec/arecord recorders via node-record-lpcm16). A missing recorder
-// binary makes that library emit an 'error' on its child process with no
-// listener, which would otherwise become an uncaughtException and quit the
-// entire app the moment the user clicks the mic. We log and stay alive — the
-// speech service surfaces a friendly status to the UI instead.
+// The speech path spawns external processes on macOS/Linux (the sox/rec/arecord
+// mic recorders via node-record-lpcm16). A missing recorder binary makes that
+// library emit an 'error' on its child process with no listener, which would
+// otherwise become an uncaughtException and quit the entire app the moment the
+// user clicks the mic. We log and stay alive — the speech service surfaces a
+// friendly status to the UI instead. (STT itself is now the resident
+// whisper-server — no per-utterance process spawn.)
 process.on("uncaughtException", (err) => {
   logger.error("Uncaught exception (kept alive)", {
     error: err && err.message,
@@ -119,9 +120,11 @@ class ApplicationController {
       envPath: ENV_PATH,
       sentinelPath: path.join(app.getPath("userData"), ".opencluely-firstrun-completed"),
     });
-    // Lazily-initialised in getWhisperInstaller() so tests can mock
-    // the constructor without polluting main-process startup.
-    this._whisperInstaller = null;
+    // Resident STT engine (STT-01) + ggml model downloader (STT-02) — lazily
+    // initialised in getWhisperServerManager()/getWhisperModelDownloader() so
+    // importing or running tests never spawns a whisper-server.
+    this._whisperServerManager = null;
+    this._whisperModelDownloader = null;
     // Local engine lifecycle (PROV-05) — lazily-initialised in
     // getLocalModelManager() so it never runs during import/tests.
     this._localModelManager = null;
@@ -291,6 +294,46 @@ class ApplicationController {
         logger.info("Local model manager started", modelStatus);
       } catch (e) {
         logger.warn("Local model manager start failed (continuing)", {
+          error: e.message,
+        });
+      }
+
+      // Resident STT engine (STT-01/SC1): pre-warm the whisper-server so each
+      // VAD segment transcribes with NO per-utterance spawn/cold-start. Mirrors
+      // the LocalModelManager start above — NON-BLOCKING (the overlay is already
+      // shown) + NON-FATAL (a failure is logged, the app continues; the inline
+      // "voice unavailable" UX surfaces recovery; typing + screenshot keep
+      // working). Unlike the Ollama daemon, whisper-server cannot start without
+      // its model file, so we only pre-warm once the ggml model is on disk — the
+      // first-run download is driven by onboarding/settings (04-07), not here.
+      try {
+        const whisperMgr = this.getWhisperServerManager();
+        if (typeof whisperMgr.modelPresent === "function" && !whisperMgr.modelPresent()) {
+          logger.info(
+            "Voice model not downloaded yet; skipping whisper-server pre-warm (onboarding/settings drives the download)",
+          );
+        } else {
+          const whisperStatus = await whisperMgr.start();
+          logger.info("Whisper server manager started", whisperStatus);
+        }
+      } catch (e) {
+        logger.warn("Whisper server manager start failed (continuing)", {
+          error: e.message,
+        });
+      }
+      // Inject the (possibly-not-yet-ready) resident manager into the speech
+      // service so the flush seam transcribes against it. setWhisperServerManager
+      // re-evaluates availability + emits a status the existing speech-status /
+      // speech-availability broadcast carries to the overlay.
+      try {
+        if (typeof speechService.setWhisperServerManager === "function") {
+          speechService.setWhisperServerManager(this.getWhisperServerManager());
+          this.speechAvailable = speechService.isAvailable
+            ? speechService.isAvailable()
+            : false;
+        }
+      } catch (e) {
+        logger.warn("Failed to inject whisper manager into speech service", {
           error: e.message,
         });
       }
@@ -705,49 +748,81 @@ class ApplicationController {
       }
     });
 
-    // Detect an installed Whisper CLI across common locations.
-    ipcMain.handle("detect-whisper", async () => {
-      try {
-        const installer = this.getWhisperInstaller();
-        return await installer.detect();
-      } catch (e) {
-        logger.warn("Whisper detection failed", { error: e.message });
-        return { found: false, command: null, version: null, error: e.message };
-      }
-    });
-
-    // Install Whisper. Streams progress lines back via `webContents.send`
-    // so the renderer can paint them as they arrive.
-    ipcMain.handle("install-whisper", async (event) => {
-      try {
-        const installer = this.getWhisperInstaller();
-        const sender = event.sender;
-        const result = await installer.install({
-          onProgress: (line) => {
-            try { sender.send("install-progress", line); } catch (_) { /* ignore */ }
-          },
-        });
-        return result;
-      } catch (e) {
-        logger.error("Whisper install failed", { error: e.message });
-        return { ok: false, command: null, message: e.message, logs: "" };
-      }
-    });
-
-    // Download Whisper model. Streams progress lines back via `webContents.send`
+    // Download the ggml voice model via the 04-02 downloader (resumable HTTP
+    // Range + SHA256 verify; atomic-rename-after-verify; no Python install
+    // step). Streams STRUCTURED { percent, downloadedBytes, totalBytes } on the same
+    // `install-progress` channel the onboarding/settings UI already listens on.
     ipcMain.handle("download-whisper-model", async (event, modelName) => {
       try {
-        const installer = this.getWhisperInstaller();
         const sender = event.sender;
-        const result = await installer.downloadModel(modelName || 'turbo', {
-          onProgress: (line) => {
-            try { sender.send("install-progress", line); } catch (_) { /* ignore */ }
+        const downloader = this.getWhisperModelDownloader();
+        const model = modelName || config.get("speech.whisper.model") || "small.en";
+        const result = await downloader.download(model, {
+          onProgress: (p) => {
+            try { sender.send("install-progress", p); } catch (_) { /* ignore */ }
           },
         });
+        // If a fresh model just landed, (re)start the server + refresh the speech
+        // service so the mic path becomes available without a relaunch.
+        if (result && result.ok) {
+          try {
+            const mgr = this.getWhisperServerManager();
+            await mgr.start();
+            if (typeof speechService.setWhisperServerManager === "function") {
+              speechService.setWhisperServerManager(mgr);
+            }
+          } catch (_) { /* best effort — inline status surfaces any failure */ }
+        }
         return result;
       } catch (e) {
         logger.error("Whisper model download failed", { error: e.message });
-        return { ok: false, message: e.message, path: null };
+        return { ok: false, reason: "error", message: e.message };
+      }
+    });
+
+    // Resident STT engine health (mirrors get-model-status). Three-level health:
+    // binary present / model present / server up (+ optional async responding).
+    ipcMain.handle("get-whisper-status", async (_event, opts) => {
+      try {
+        return await this.getWhisperServerManager().getStatus(opts);
+      } catch (e) {
+        return { serverUp: false, error: e.message };
+      }
+    });
+
+    // Voice-engine recovery (mirrors recover-model). 'download' → (re)fetch the
+    // ggml model with progress then restart; anything else → (re)start the owned
+    // server. Either way the speech service is refreshed so the mic recovers.
+    ipcMain.handle("whisper-recover", async (event, action) => {
+      try {
+        const mgr = this.getWhisperServerManager();
+        if (action === "download") {
+          const sender = event.sender;
+          const downloader = this.getWhisperModelDownloader();
+          const result = await downloader.download(
+            config.get("speech.whisper.model") || "small.en",
+            {
+              onProgress: (p) => {
+                try { sender.send("install-progress", p); } catch (_) { /* ignore */ }
+              },
+            },
+          );
+          try {
+            await mgr.start();
+            if (typeof speechService.setWhisperServerManager === "function") {
+              speechService.setWhisperServerManager(mgr);
+            }
+          } catch (_) { /* best effort */ }
+          return result;
+        }
+        const status = await mgr.start();
+        if (typeof speechService.setWhisperServerManager === "function") {
+          speechService.setWhisperServerManager(mgr);
+        }
+        return status;
+      } catch (e) {
+        logger.error("Whisper recovery failed", { action, error: e.message });
+        return { ok: false, error: e.message };
       }
     });
 
@@ -1520,6 +1595,13 @@ class ApplicationController {
       if (stopping && typeof stopping.catch === "function") stopping.catch(() => {});
     } catch (_) { /* best effort */ }
 
+    // Stop the resident whisper-server we own (own-only; never lingers after
+    // quit). Fire-and-forget — quit must not wait on the SIGTERM->SIGKILL grace.
+    try {
+      const stoppingWhisper = this.getWhisperServerManager().stop();
+      if (stoppingWhisper && typeof stoppingWhisper.catch === "function") stoppingWhisper.catch(() => {});
+    } catch (_) { /* best effort */ }
+
     const sessionStats = sessionManager.getMemoryUsage();
     logger.info("Application shutting down", {
       sessionEvents: sessionStats.eventCount,
@@ -1527,17 +1609,25 @@ class ApplicationController {
     });
   }
 
-  getWhisperInstaller() {
-    if (!this._whisperInstaller) {
-      const WhisperInstaller = require("./src/core/whisper-installer");
-      const { app } = require("electron");
-      this._whisperInstaller = new WhisperInstaller({
-        cwd: process.cwd(),
-        dataDir: app.getPath("userData"),
-        platform: process.platform,
-      });
+  // Resident STT engine (STT-01): supervises the from-source whisper-server,
+  // reports three-level health, transcribes over POST /inference. Lazily
+  // constructed so import-time and tests never spawn a server.
+  getWhisperServerManager() {
+    if (!this._whisperServerManager) {
+      const WhisperServerManager = require("./src/core/whisper-server.manager");
+      this._whisperServerManager = new WhisperServerManager();
     }
-    return this._whisperInstaller;
+    return this._whisperServerManager;
+  }
+
+  // ggml voice-model downloader (STT-02): resumable, SHA256-verified download of
+  // ggml-<model>.bin into <userData>/.whisper-models. Lazily constructed.
+  getWhisperModelDownloader() {
+    if (!this._whisperModelDownloader) {
+      const WhisperModelDownloader = require("./src/core/whisper-model-downloader");
+      this._whisperModelDownloader = new WhisperModelDownloader();
+    }
+    return this._whisperModelDownloader;
   }
 
   // Local engine (PROV-05): adopts/owns the Ollama daemon, ensures the
