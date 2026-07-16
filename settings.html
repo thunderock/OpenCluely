@@ -447,9 +447,37 @@
                     <div id="azureFieldsNote" class="settings-note">
                         Azure credentials apply immediately and are also written back to <code>.env</code> so they persist across restarts.
                     </div>
+
+                    <!-- Local voice engine (whisper.cpp) status / model / repair.
+                         PROVE-THEN-REMOVE (04-09): the #speechProvider azure|whisper
+                         dropdown, #azureFields, #azureFieldsNote and the #whisperFields
+                         CLI inputs ABOVE are left in place deliberately — 04-09 removes
+                         the provider dropdown + Azure fields + the dead Python CLI
+                         fields holistically when STT collapses to the single resident
+                         engine. This panel mirrors the Local-model status panel below. -->
+                    <div class="settings-item">
+                        <div class="settings-stack">
+                            <div>
+                                <div class="settings-item-label">Voice engine status</div>
+                                <div class="settings-item-description">Resident whisper.cpp engine — binary, voice model, and server health</div>
+                            </div>
+                            <div id="whisperStatus" class="settings-note">Checking…</div>
+                        </div>
+                    </div>
+                    <div class="settings-item">
+                        <div>
+                            <div class="settings-item-label">Download / repair voice model</div>
+                            <div class="settings-item-description">Download the ggml-small.en model if missing, or repair the voice engine</div>
+                        </div>
+                        <button class="btn" id="whisperRepairBtn">
+                            <i class="fas fa-arrows-rotate"></i>
+                            Download / repair voice model
+                        </button>
+                    </div>
+                    <div class="install-log" id="whisperStatusLog"></div>
                 </div>
             </div>
-            
+
             <div class="settings-section">
                 <div class="settings-section-title">
                     <i class="fas fa-microchip"></i>

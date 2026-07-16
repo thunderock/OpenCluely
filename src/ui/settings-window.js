@@ -29,6 +29,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const repairModelBtn = document.getElementById('repairModelBtn');
     const modelStatusLog = document.getElementById('modelStatusLog');
 
+    // Resident whisper.cpp voice engine (STT) status / model / repair (04-07).
+    const whisperStatus = document.getElementById('whisperStatus');
+    const whisperRepairBtn = document.getElementById('whisperRepairBtn');
+    const whisperStatusLog = document.getElementById('whisperStatusLog');
+
     // Curated list arrives from getSettings(); this fallback lets us classify a
     // saved model as curated-vs-advanced even before settings load.
     const DEFAULT_CURATED = ['qwen3-vl:8b', 'qwen3-vl:30b', 'gemma3:4b', 'gemma3:12b'];
@@ -139,6 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         updateLocalModelFieldStates();
         refreshModelStatus();
+        refreshWhisperStatus();
 
         updateSpeechFieldStates();
     };
@@ -282,6 +288,47 @@ document.addEventListener('DOMContentLoaded', () => {
         return `${p.status || 'downloading'}${pct}`;
     };
 
+    // ── Resident whisper.cpp voice engine (STT) status / model / repair ──
+    // Mirrors the local-model status panel. getWhisperStatus() returns the
+    // three/four-level health { binaryPresent, modelPresent, serverUp,
+    // responding }; passing probeResponding surfaces the responding level.
+    const renderWhisperStatusLine = (s) => {
+        if (!s || s.error) return `Status unavailable${s && s.error ? ': ' + s.error : ''}`;
+        if (!s.binaryPresent) return 'Voice engine missing — reinstall / rebuild the app';
+        if (!s.modelPresent) return 'Voice model missing — download it';
+        if (!s.serverUp) return 'Engine not responding — repair';
+        return `Engine up · model present${s.responding ? ' · responding' : ''}`;
+    };
+
+    const refreshWhisperStatus = async () => {
+        if (!whisperStatus || !window.electronAPI || !window.electronAPI.getWhisperStatus) return;
+        try {
+            const s = await window.electronAPI.getWhisperStatus({ probeResponding: true });
+            whisperStatus.textContent = renderWhisperStatusLine(s);
+        } catch (e) {
+            whisperStatus.textContent = 'Status unavailable: ' + (e.message || e);
+        }
+    };
+
+    const appendWhisperLog = (line) => {
+        if (!whisperStatusLog) return;
+        whisperStatusLog.textContent += (whisperStatusLog.textContent ? '\n' : '') + line;
+        whisperStatusLog.scrollTop = whisperStatusLog.scrollHeight;
+    };
+
+    // install-progress arrives structured as { percent, downloadedBytes,
+    // totalBytes } (or a legacy string). Render a compact human line.
+    const formatWhisperProgress = (p) => {
+        if (!p) return '';
+        if (typeof p === 'string') return p;
+        const pct = (typeof p.percent === 'number') ? `${p.percent}%` : '';
+        const mb = (n) => (typeof n === 'number' && isFinite(n) ? `${(n / (1024 * 1024)).toFixed(0)} MB` : '');
+        const size = (typeof p.downloadedBytes === 'number' && typeof p.totalBytes === 'number')
+            ? ` (${mb(p.downloadedBytes)} / ${mb(p.totalBytes)})`
+            : '';
+        return `${pct || 'downloading'}${size}`;
+    };
+
     // Add event listeners for all inputs
     const inputs = [
         azureKeyInput,
@@ -403,6 +450,55 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Download the voice model if missing, else recover (restart) the resident
+    // whisper server. Streams install-progress into the log; mirrors repairModelBtn.
+    if (whisperRepairBtn) {
+        whisperRepairBtn.addEventListener('click', async () => {
+            if (!window.electronAPI) return;
+            whisperRepairBtn.disabled = true;
+            let unsubscribe = null;
+            if (window.electronAPI.onInstallProgress) {
+                unsubscribe = window.electronAPI.onInstallProgress((p) => {
+                    appendWhisperLog(formatWhisperProgress(p));
+                });
+            }
+            try {
+                // Decide download-vs-repair from current health (bridge-guarded).
+                let missingModel = false;
+                if (window.electronAPI.getWhisperStatus) {
+                    try {
+                        const s = await window.electronAPI.getWhisperStatus();
+                        missingModel = !!(s && s.binaryPresent && !s.modelPresent);
+                    } catch (_) { /* fall through to repair */ }
+                }
+                if (missingModel && window.electronAPI.downloadWhisperModel) {
+                    appendWhisperLog('Downloading ggml-small.en voice model…');
+                    const r = await window.electronAPI.downloadWhisperModel('small.en');
+                    appendWhisperLog(r && r.ok
+                        ? '\n✓ Voice model ready'
+                        : `\n✗ ${r && r.message ? r.message : 'Download failed'}`);
+                } else if (window.electronAPI.recoverWhisper) {
+                    appendWhisperLog('Repairing voice engine…');
+                    const r = await window.electronAPI.recoverWhisper();
+                    const ok = !!(r && (r.ok || r.serverUp));
+                    appendWhisperLog(ok
+                        ? '\n✓ Voice engine restarted'
+                        : `\n✗ ${(r && (r.message || r.error)) || 'Repair did not complete'}`);
+                } else {
+                    appendWhisperLog('Voice engine controls unavailable.');
+                }
+            } catch (e) {
+                appendWhisperLog(`\n! Error: ${e.message || e}`);
+            } finally {
+                if (typeof unsubscribe === 'function') {
+                    try { unsubscribe(); } catch (_) { /* ignore */ }
+                }
+                whisperRepairBtn.disabled = false;
+                refreshWhisperStatus();
+            }
+        });
+    }
+
     updateSpeechFieldStates();
 
     // Initialize icon grid with correct paths
@@ -489,8 +585,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize icon grid
     initializeIconGrid();
 
-    // Light periodic refresh of local model health while settings is open.
+    // Light periodic refresh of local model + voice engine health while open.
     setInterval(refreshModelStatus, 8000);
+    setInterval(refreshWhisperStatus, 8000);
 
     // Request settings on load
     setTimeout(() => {
