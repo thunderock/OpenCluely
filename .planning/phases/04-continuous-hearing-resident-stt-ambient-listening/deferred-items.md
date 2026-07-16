@@ -27,3 +27,15 @@ BOUNDARY rule: log, do not fix, do not restart builds to chase resolution).
   - **Early non-proof signal (do not treat as evidence):** the helper, built to a universal Mach-O and run UNSIGNED from a CLI shell on a macOS >= 14.4 machine, emitted `{"type":"start",…,"pcm_s16le",16000}` then a clean `{"type":"stop"}` on SIGTERM. Proves the mechanism compiles + starts only — a CLI TCC context ≠ the packaged-app TCC context, and "start" ≠ samples flowed.
   - **Phase-8 action:** set up code signing (Developer ID / hardened runtime + entitlements + `asarUnpack` of `resources/bin/system-audio-tap` + DMG), then RE-RUN the 04-05 Task-4 spike to determine (1) which signing level (ad-hoc vs self/real Developer ID) makes the TCC prompt actually FIRE, (2) whether `source:'system'` PCM samples actually FLOW after granting (a system-channel transcript appears for other-app audio — check SYSAUDIO logs / overlay label), and (3) whether a relaunch-after-grant is required. **Gate shipping system audio on that outcome.**
   - **Reference:** `.planning/phases/04-…/04-05-SUMMARY.md` → "Signing Spike Outcome (Task 4) — DEFERRED to Phase 8" + "Phase-8 Follow-up".
+
+## 04-08 (validation gate) — real-world validation DEFERRED to pre-ship / Phase 8 (2026-07-16)
+
+- **[DEFERRED by human decision — 2026-07-16, "defer real validation, proceed"]** Run the full real-world validation of the resident STT engine before shipping (ideally on a signed dev build, alongside the Phase-8 signing spike).
+  - **Why deferred:** the human accepted the keyless proof (145/145 tests; the 04-03 `smoke-whisper.js` loopback `POST /inference`→`verbose_json`→`no_speech_prob` gate round-trip; the new `smoke-whisper-mem.js` latency/memory/silence spot-check; headless degrade-to-mic + simulated `powerMonitor 'resume'`) as sufficient to proceed to the final (on-branch, revertible) Azure removal. The mic path is well-covered; the attended real-world run is a pre-ship confidence check, not a blocker.
+  - **NOT yet performed (run these before shipping):**
+    1. **SC2 real download** — clear `<userData>/.whisper-models/`, run onboarding → the ~488 MB `ggml-small.en` shows visible/resumable progress, SHA256-verifies before "installed", caches in userData; a killed-mid-download resumes from the `.part`; a partial/corrupt file must NOT register as installed.
+    2. **Flag 5 latency/memory** — `node scripts/smoke-whisper-mem.js <real-phrase.wav>` → correct-ish transcript, near-real-time latency on Metal, whisper-server RSS + `qwen3-vl:8b` RSS coexist in the ~32 GB budget with no swap.
+    3. **SC5 2-min silence** — ambient on, quiet room, 2 full minutes → ZERO transcripts; then one clear sentence → transcribes (proves the three-gate composition isn't just muted).
+    4. **STT-03 resilience** — real sleep→wake (whisper-server re-warms, ambient resumes, no crash) + AirPods in/out mid-session (renderer capture re-attaches, no crash).
+  - **SC4 system audio** rides with the 04-05 Phase-8 signing spike above (mic-only baseline until then).
+  - **Reference:** `.planning/phases/04-…/04-08-SUMMARY.md` → "Validation gate outcome (Task 2) — DEFERRED".
