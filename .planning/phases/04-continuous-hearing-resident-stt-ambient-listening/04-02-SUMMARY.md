@@ -93,10 +93,10 @@ None to the module or tests — both tasks executed exactly as written (both ver
 
 ## Issues Encountered
 
-**Whole-repo `make lint` fails on vendored whisper.cpp source (OUT OF SCOPE — logged, not fixed).**
-- `npx eslint .` reports a parse error in `resources/.whisper-cpp-src/examples/addon.node/index.js` (`Binding arguments in strict mode`). This is third-party whisper.cpp source vendored by the concurrent **04-01** executor (untracked dir, created this session), which owns the whisper-server build + resources + build/eslint config this wave.
-- My deliverables lint CLEAN in isolation (`npx eslint src/core/whisper-model-downloader.js test/whisper-model-downloader.test.js` exits 0) and all 103 tests pass.
-- Per the SCOPE BOUNDARY rule I did NOT edit `eslint.config.js` (a concurrent edit would collide with 04-01 on the shared branch). Logged to `.planning/phases/04-.../deferred-items.md` with the suggested fix: add `'resources/.whisper-cpp-src/**'` (or `'resources/**'`) to the eslint `ignores` block, matching the existing vendored exclusions. `make lint` returns to exit 0 once that ignore lands.
+**Whole-repo `make lint` transiently failed on vendored whisper.cpp source — RESOLVED during the wave by 04-01.**
+- Mid-execution, `npx eslint .` reported a parse error in `resources/.whisper-cpp-src/examples/addon.node/index.js` (`Binding arguments in strict mode`) — third-party whisper.cpp source vendored by the concurrent **04-01** executor (which owns the whisper-server build + resources + build/eslint config this wave).
+- My deliverables lint CLEAN in isolation (`npx eslint src/core/whisper-model-downloader.js test/whisper-model-downloader.test.js` exits 0). Per the SCOPE BOUNDARY rule I did NOT edit `eslint.config.js` (a concurrent edit would collide with 04-01 on the shared branch); I logged it to `deferred-items.md` instead.
+- **Resolved:** 04-01 then landed `chore(04-01): eslint-ignore the whisper-server build cache` (`a0dfd0a`). Re-verified after that commit: whole-repo `make lint` exits 0 and `make run_tests` is 116/116 green. No 04-02 follow-up required.
 
 ## User Setup Required
 None - no external service configuration required. (The real 488 MB download runs at the 04-08 validation gate / onboarding; this plan ships the network-free engine.)
@@ -104,7 +104,7 @@ None - no external service configuration required. (The real 488 MB download run
 ## Next Phase Readiness
 - Download engine ready for 04-03 to wire over IPC (structured progress mirrors the Ollama `model-pull-progress` shape) and for 04-07 onboarding UX.
 - 04-08 will validate the REAL download (resume, checksum, cache location) against Hugging Face.
-- One cross-plan follow-up (04-01's to close): add the vendored `resources/` tree to the eslint `ignores` so the whole-repo `make lint` gate is green again.
+- Whole-repo gates green at hand-off: `make lint` exit 0, `make run_tests` 116/116 (04-01's `a0dfd0a` cleared the transient vendored-source lint failure). No open 04-02 follow-ups.
 
 ---
 *Phase: 04-continuous-hearing-resident-stt-ambient-listening*
