@@ -60,17 +60,10 @@ class ConfigManager {
       },
 
       speech: {
-        provider: 'azure',
-        azure: {
-          language: 'en-US',
-          enableDictation: true,
-          enableAudioLogging: false,
-          outputFormat: 'detailed'
-        },
-        // Resident whisper.cpp whisper-server engine (STT-01). Collapsed to the
-        // single whisper-server block; the VAD knobs below are now SHARED by both
-        // capture channels (mic + system, 04-04). speech.provider / speech.azure
-        // are deliberately left in place until 04-09 (prove-then-remove).
+        // Resident whisper.cpp whisper-server engine (STT-01) is the SOLE speech
+        // config — the former cloud STT provider + its config block were removed,
+        // so STT collapses to this single whisper-server block. The VAD knobs
+        // below are SHARED by both capture channels (mic + system, 04-04).
         whisper: {
           host: '127.0.0.1',      // whisper-server bind host (loopback only)
           port: 0,                // 0 = auto-pick a free port at start()
