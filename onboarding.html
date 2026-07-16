@@ -788,19 +788,9 @@
                         <div class="choice-text">
                             <div class="choice-title">Local Whisper</div>
                             <div class="choice-desc">
-                                Run OpenAI Whisper on your own machine. Free, offline, and private —
-                                no data leaves your computer. Requires Python.
-                            </div>
-                        </div>
-                        <div class="choice-radio"></div>
-                    </div>
-                    <div class="choice-card" data-value="azure">
-                        <div class="choice-icon"><i class="fas fa-cloud"></i></div>
-                        <div class="choice-text">
-                            <div class="choice-title">Azure Speech</div>
-                            <div class="choice-desc">
-                                Microsoft Azure cloud STT. Needs an Azure Speech key + region.
-                                High accuracy, requires internet.
+                                Transcribe your speech on your own machine with the built-in
+                                whisper.cpp engine. Free, offline, and private — no data leaves
+                                your computer, no extra install.
                             </div>
                         </div>
                         <div class="choice-radio"></div>
@@ -814,25 +804,6 @@
                             </div>
                         </div>
                         <div class="choice-radio"></div>
-                    </div>
-                </div>
-
-                <!-- Inline Azure key entry (revealed only if Azure selected) -->
-                <div id="azurePanel" style="display:none; margin-top: 14px;">
-                    <div class="field">
-                        <label for="azureKey">Azure Speech Key</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-key icon"></i>
-                            <input type="password" id="azureKey" class="input" placeholder="Azure key" autocomplete="off">
-                        </div>
-                    </div>
-                    <div class="field">
-                        <label for="azureRegion">Azure Region</label>
-                        <div class="input-wrap">
-                            <i class="fas fa-globe icon"></i>
-                            <input type="text" id="azureRegion" class="input" placeholder="eastus" autocomplete="off">
-                        </div>
-                        <div class="hint">e.g. <code>eastus</code>, <code>westus2</code>, <code>westeurope</code></div>
                     </div>
                 </div>
             </section>

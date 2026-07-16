@@ -493,7 +493,7 @@ class ApplicationController {
 
     speechService.on("transcription", (payload) => {
       // The flush now emits { text, source:'mic'|'system' } (04-04). Stay
-      // tolerant of a bare string (Azure path / any legacy emit) → treat as mic.
+      // tolerant of a bare string (any legacy emit) → treat as mic.
       if (typeof payload === "string") {
         this.handleTranscriptionFragment({ text: payload, source: "mic" });
       } else {
@@ -1927,11 +1927,9 @@ class ApplicationController {
       selectedIcon: this.appIcon || "terminal",
       windowGap: windowManager.windowGap,
 
-      speechProvider: speechService.provider || "whisper",
-      azureKey: process.env.AZURE_SPEECH_KEY || "",
-      azureRegion: process.env.AZURE_SPEECH_REGION || "",
-      whisperCommand: process.env.WHISPER_COMMAND || "",
-      whisperModel: process.env.WHISPER_MODEL || "turbo",
+      // STT is the single resident whisper engine now (no provider selection).
+      speechProvider: "whisper",
+      whisperModel: process.env.WHISPER_MODEL || "small.en",
       whisperLanguage: process.env.WHISPER_LANGUAGE || "en",
       whisperSegmentMs: process.env.WHISPER_SEGMENT_MS || "4000",
 
@@ -1942,7 +1940,6 @@ class ApplicationController {
       model: config.get("llm.local.model"),
       curatedModels: config.get("llm.local.curatedModels"),
 
-      azureConfigured: !!process.env.AZURE_SPEECH_KEY && !!process.env.AZURE_SPEECH_REGION,
       speechAvailable: this.speechAvailable
     };
   }
@@ -1979,18 +1976,8 @@ class ApplicationController {
       // Writing to .env ensures they survive app restarts and are picked
       // up the next time the app boots.
       const envUpdates = {};
-      if (settings.speechProvider === "azure" || settings.speechProvider === "whisper") {
-        envUpdates.SPEECH_PROVIDER = settings.speechProvider;
-      }
-      if (settings.azureKey !== undefined) {
-        envUpdates.AZURE_SPEECH_KEY = settings.azureKey;
-      }
-      if (settings.azureRegion !== undefined) {
-        envUpdates.AZURE_SPEECH_REGION = settings.azureRegion;
-      }
-      if (settings.whisperCommand !== undefined) {
-        envUpdates.WHISPER_COMMAND = settings.whisperCommand;
-      }
+      // STT is the single resident whisper engine (no provider selection). Only
+      // the whisper-server knobs persist to .env; config.speech.whisper reads them.
       if (settings.whisperModel !== undefined) {
         envUpdates.WHISPER_MODEL = settings.whisperModel;
       }
@@ -2012,12 +1999,6 @@ class ApplicationController {
         envUpdates.LOCAL_MODEL = settings.model;
       }
 
-      // Capture the previous whisper command BEFORE persisting — persistEnvUpdates
-      // mutates process.env in place, so comparing afterwards would always read
-      // equal and skip the speech re-init below (the exact stale-mic-after-install
-      // bug the re-init guards against).
-      const prevWhisperCommand = process.env.WHISPER_COMMAND || '';
-
       const persistedKeys = this.persistEnvUpdates(envUpdates);
 
       if (settings.provider !== undefined || settings.model !== undefined) {
@@ -2026,42 +2007,6 @@ class ApplicationController {
           provider: settings.provider,
           model: settings.model,
         });
-      }
-
-      // Reinitialize speech service when provider OR whisper command
-      // changes. Without the second check, the install flow (which
-      // writes a new whisperCommand after install but keeps the same
-      // provider) would leave the speech service pointing at a stale
-      // (or non-existent) binary, and the main overlay's mic button
-      // would stay hidden / non-functional.
-      const providerChanged = settings.speechProvider && speechService.provider !== settings.speechProvider;
-      const whisperCommandChanged = settings.whisperCommand !== undefined &&
-        prevWhisperCommand !== String(settings.whisperCommand || '');
-      if (providerChanged || whisperCommandChanged) {
-        try {
-          speechService.initializeClient();
-          this.speechAvailable = speechService.isAvailable
-            ? speechService.isAvailable()
-            : false;
-          // Broadcast so any open window (settings, overlay, chat)
-          // can react immediately — especially the main overlay's
-          // mic button, which queries availability on load.
-          const { BrowserWindow } = require("electron");
-          BrowserWindow.getAllWindows().forEach((win) => {
-            if (!win.isDestroyed()) {
-              win.webContents.send("speech-availability", { available: this.speechAvailable });
-            }
-          });
-          logger.info('Speech service reinitialized after settings change', {
-            providerChanged,
-            whisperCommandChanged,
-            speechAvailable: this.speechAvailable,
-          });
-        } catch (e) {
-          logger.warn("Failed to reinitialize speech service after settings change", {
-            error: e.message
-          });
-        }
       }
 
       logger.info("Settings saved successfully", {

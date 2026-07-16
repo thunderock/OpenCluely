@@ -5,7 +5,7 @@
  * everything via the electronAPI bridge exposed by preload.js:
  *
  *   1. Welcome
- *   2. Speech provider choice (Whisper / Azure / Skip)
+ *   2. Speech choice (local Whisper / Skip)
  *   3. Voice engine check (resident whisper.cpp) — only shown when whisper
  *   4. Voice model (ggml-small.en) download — only shown when whisper
  *   5. Local model engine (Ollama) guide-install + re-check (openwhispr-style)
@@ -30,9 +30,7 @@
   // ── State ─────────────────────────────────────────────────────────
   const state = {
     step: 0,
-    speechProvider: null, // 'whisper' | 'azure' | 'skip'
-    azureKey: '',
-    azureRegion: '',
+    speechProvider: null, // 'whisper' | 'skip'
     whisperDetected: false,
     skippingWhisper: false,
     modelDownloadChoice: null, // 'now' | 'later'
@@ -130,9 +128,6 @@
       case 'welcome':
         return true;
       case 'speech':
-        if (state.speechProvider === 'azure') {
-          return !!state.azureKey.trim() && !!state.azureRegion.trim();
-        }
         return !!state.speechProvider;
       case 'whisper':
         // Allow advancing whether whisper is detected OR user skipped
@@ -154,23 +149,16 @@
   }
 
   // ── Wire up: Speech choices ───────────────────────────────────────
+  // STT is the single local whisper engine now — the choice list is just
+  // "Local Whisper" vs "Skip for now" (no cloud provider, no key entry).
   $$('#speechChoices .choice-card').forEach((card) => {
     card.addEventListener('click', () => {
       const value = card.dataset.value;
       state.speechProvider = value;
       $$('#speechChoices .choice-card').forEach((c) => c.classList.remove('selected'));
       card.classList.add('selected');
-      const azurePanel = $('#azurePanel');
-      azurePanel.style.display = value === 'azure' ? 'block' : 'none';
-      if (value !== 'azure') {
-        state.azureKey = '';
-        state.azureRegion = '';
-      }
     });
   });
-
-  $('#azureKey').addEventListener('input', (e) => { state.azureKey = e.target.value.trim(); });
-  $('#azureRegion').addEventListener('input', (e) => { state.azureRegion = e.target.value.trim(); });
 
   // ── Wire up: Whisper screen ───────────────────────────────────────
   const installLog = $('#installLog');
@@ -531,12 +519,6 @@
         value: state.whisperDetected ? 'Local voice engine (whisper.cpp)' : 'Voice engine unavailable',
         cls: state.whisperDetected ? 'ok' : 'skip',
       });
-    } else if (state.speechProvider === 'azure') {
-      rows.push({
-        label: '<i class="fas fa-cloud"></i> Speech',
-        value: 'Azure',
-        cls: 'ok',
-      });
     } else {
       rows.push({
         label: '<i class="fas fa-microphone"></i> Speech',
@@ -584,21 +566,6 @@
     const name = currentScreenName();
     if (!canAdvance()) {
       return;
-    }
-
-    // Persist speech settings on the speech screen (Azure path).
-    if (name === 'speech' && window.electronAPI) {
-      try {
-        const payload = {
-          speechProvider:
-            state.speechProvider === 'skip' ? 'whisper' : state.speechProvider,
-        };
-        if (state.speechProvider === 'azure') {
-          payload.azureKey = state.azureKey;
-          payload.azureRegion = state.azureRegion;
-        }
-        await window.electronAPI.saveSettings(payload);
-      } catch (_) { /* surfaced elsewhere */ }
     }
 
     // Whisper screen: kick off detection on entry

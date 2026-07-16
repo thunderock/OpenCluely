@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { parseEnv } = require('./env-file');
 
 /**
  * First-run detection and onboarding helper.
@@ -77,22 +76,11 @@ class FirstRunManager {
    * Get a snapshot of the current setup state for UI / logging.
    */
   getStatus() {
-    const env = this._readEnv();
     return {
       envExists: fs.existsSync(this.envPath),
       sentinelExists: fs.existsSync(this.sentinelPath),
-      azureConfigured: !!(env.AZURE_SPEECH_KEY || '').trim() && !!(env.AZURE_SPEECH_REGION || '').trim(),
-      whisperConfigured: !!(env.WHISPER_COMMAND || '').trim(),
       needsOnboarding: this.needsOnboarding()
     };
-  }
-
-  _readEnv() {
-    try {
-      return parseEnv(fs.readFileSync(this.envPath, 'utf8'));
-    } catch (_) {
-      return {};
-    }
   }
 
   _readTemplate() {
@@ -112,13 +100,10 @@ class FirstRunManager {
       '# OpenCluely answers locally via Ollama — no cloud API key required.',
       '# Install Ollama (https://ollama.com/download); onboarding pulls the model.',
       '',
-      '# Speech provider: "whisper" (local resident whisper-server) or "azure" (cloud).',
-      '# The local voice model (ggml) is downloaded by the onboarding wizard into a',
-      '# stable app-data folder — no Python, no CLI, no PATH change or restart needed.',
-      'SPEECH_PROVIDER=whisper',
-      'WHISPER_MODEL=small.en',
-      'WHISPER_LANGUAGE=en',
-      'WHISPER_SEGMENT_MS=4000',
+      '# Speech is transcribed locally by the built-in whisper.cpp engine. The voice',
+      '# model (ggml) is downloaded by the onboarding wizard into a stable app-data',
+      '# folder — no Python, no CLI, no PATH change or restart needed. config.js',
+      '# supplies sensible defaults; no speech-specific .env keys are required.',
       ''
     ].join(os.EOL);
   }

@@ -6,13 +6,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Get DOM elements
     const closeButton = document.getElementById('closeButton');
     const quitButton = document.getElementById('quitButton');
-    const speechProviderSelect = document.getElementById('speechProvider');
-    const azureKeyInput = document.getElementById('azureKey');
-    const azureRegionInput = document.getElementById('azureRegion');
-    const whisperCommandInput = document.getElementById('whisperCommand');
-    const whisperModelInput = document.getElementById('whisperModel');
-    const whisperLanguageInput = document.getElementById('whisperLanguage');
-    const whisperSegmentMsInput = document.getElementById('whisperSegmentMs');
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
     const activeSkillSelect = document.getElementById('activeSkill');
@@ -91,16 +84,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Function to load settings into UI
     const loadSettingsIntoUI = (settings) => {
-        if (settings.speechProvider && speechProviderSelect) speechProviderSelect.value = settings.speechProvider;
-        // Always set the input value, even if empty, so the user sees what's
-        // currently configured (including env-derived defaults). Previously
-        // empty strings were skipped which left stale UI values.
-        if (azureKeyInput) azureKeyInput.value = settings.azureKey || '';
-        if (azureRegionInput) azureRegionInput.value = settings.azureRegion || '';
-        if (whisperCommandInput) whisperCommandInput.value = settings.whisperCommand || '';
-        if (whisperModelInput) whisperModelInput.value = settings.whisperModel || '';
-        if (whisperLanguageInput) whisperLanguageInput.value = settings.whisperLanguage || '';
-        if (whisperSegmentMsInput) whisperSegmentMsInput.value = settings.whisperSegmentMs || '';
         if (windowGapInput) windowGapInput.value = settings.windowGap || '';
 
         // Set C++ as default if no coding language is specified
@@ -145,8 +128,6 @@ document.addEventListener('DOMContentLoaded', () => {
         updateLocalModelFieldStates();
         refreshModelStatus();
         refreshWhisperStatus();
-
-        updateSpeechFieldStates();
     };
 
     // Load settings when window opens
@@ -172,13 +153,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Save settings helper function
     const saveSettings = () => {
         const settings = {};
-        if (speechProviderSelect) settings.speechProvider = speechProviderSelect.value;
-        if (azureKeyInput) settings.azureKey = azureKeyInput.value;
-        if (azureRegionInput) settings.azureRegion = azureRegionInput.value;
-        if (whisperCommandInput) settings.whisperCommand = whisperCommandInput.value;
-        if (whisperModelInput) settings.whisperModel = whisperModelInput.value;
-        if (whisperLanguageInput) settings.whisperLanguage = whisperLanguageInput.value;
-        if (whisperSegmentMsInput) settings.whisperSegmentMs = whisperSegmentMsInput.value;
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
@@ -192,35 +166,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         window.api.send('save-settings', settings);
-    };
-
-    const updateSpeechFieldStates = () => {
-        const provider = speechProviderSelect ? speechProviderSelect.value : 'azure';
-
-        // Show/hide provider-specific field groups instead of just disabling
-        // them. This keeps the settings UI clean — only the relevant fields
-        // for the selected provider are visible.
-        const azureGroup = document.getElementById('azureFields');
-        const whisperGroup = document.getElementById('whisperFields');
-        const azureNote = document.getElementById('azureFieldsNote');
-
-        if (azureGroup) {
-            azureGroup.style.display = provider === 'azure' ? '' : 'none';
-        }
-        if (whisperGroup) {
-            whisperGroup.style.display = provider === 'whisper' ? '' : 'none';
-        }
-        if (azureNote) {
-            azureNote.style.display = provider === 'azure' ? '' : 'none';
-        }
-
-        // Also toggle disabled attribute for any leftover direct field refs
-        [azureKeyInput, azureRegionInput].forEach(input => {
-            if (input) input.disabled = provider !== 'azure';
-        });
-        [whisperCommandInput, whisperModelInput, whisperLanguageInput, whisperSegmentMsInput].forEach(input => {
-            if (input) input.disabled = provider !== 'whisper';
-        });
     };
 
     // ── AI model engine (PROV-06) UI helpers ──
@@ -331,12 +276,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Add event listeners for all inputs
     const inputs = [
-        azureKeyInput,
-        azureRegionInput,
-        whisperCommandInput,
-        whisperModelInput,
-        whisperLanguageInput,
-        whisperSegmentMsInput,
         windowGapInput
     ];
 
@@ -346,13 +285,6 @@ document.addEventListener('DOMContentLoaded', () => {
             input.addEventListener('blur', saveSettings);
         }
     });
-
-    if (speechProviderSelect) {
-        speechProviderSelect.addEventListener('change', () => {
-            updateSpeechFieldStates();
-            saveSettings();
-        });
-    }
 
     // Language selection handler
     if (codingLanguageSelect) {
@@ -498,8 +430,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-
-    updateSpeechFieldStates();
 
     // Initialize icon grid with correct paths
     const initializeIconGrid = () => {
