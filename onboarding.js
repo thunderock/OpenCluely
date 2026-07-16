@@ -5,9 +5,9 @@
  * everything via the electronAPI bridge exposed by preload.js:
  *
  *   1. Welcome
- *   2. Speech provider choice (Whisper / Azure / Skip)
- *   3. Whisper detect + (optional) install — only shown when whisper
- *   4. Whisper model download — only shown when whisper
+ *   2. Speech choice (local Whisper / Skip)
+ *   3. Voice engine check (resident whisper.cpp) — only shown when whisper
+ *   4. Voice model (ggml-small.en) download — only shown when whisper
  *   5. Local model engine (Ollama) guide-install + re-check (openwhispr-style)
  *   6. Local model pull (qwen3-vl:8b) with resumable progress + preflight warn
  *   7. Star-the-repo prompt + summary
@@ -20,18 +20,6 @@
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
 
-  // Quote the executable portion of a command string if it contains spaces.
-  // This keeps Windows user profile paths (e.g. C:\Users\CANDAN SINGH\...) intact.
-  function quoteCommandIfNeeded(cmd) {
-    if (!cmd) return cmd;
-    const firstSpace = cmd.indexOf(' ');
-    if (firstSpace === -1) return cmd;
-    const exe = cmd.slice(0, firstSpace);
-    const rest = cmd.slice(firstSpace + 1);
-    if (exe.startsWith('"') || rest.startsWith('"')) return cmd;
-    return `"${exe}" ${rest}`;
-  }
-
   const screens = $$('.screen');
   const stepperDots = $$('.step-dot');
   const stepBadge = $('#stepBadge');
@@ -42,10 +30,7 @@
   // ── State ─────────────────────────────────────────────────────────
   const state = {
     step: 0,
-    speechProvider: null, // 'whisper' | 'azure' | 'skip'
-    azureKey: '',
-    azureRegion: '',
-    whisperCmd: null,
+    speechProvider: null, // 'whisper' | 'skip'
     whisperDetected: false,
     skippingWhisper: false,
     modelDownloadChoice: null, // 'now' | 'later'
@@ -143,9 +128,6 @@
       case 'welcome':
         return true;
       case 'speech':
-        if (state.speechProvider === 'azure') {
-          return !!state.azureKey.trim() && !!state.azureRegion.trim();
-        }
         return !!state.speechProvider;
       case 'whisper':
         // Allow advancing whether whisper is detected OR user skipped
@@ -167,23 +149,16 @@
   }
 
   // ── Wire up: Speech choices ───────────────────────────────────────
+  // STT is the single local whisper engine now — the choice list is just
+  // "Local Whisper" vs "Skip for now" (no cloud provider, no key entry).
   $$('#speechChoices .choice-card').forEach((card) => {
     card.addEventListener('click', () => {
       const value = card.dataset.value;
       state.speechProvider = value;
       $$('#speechChoices .choice-card').forEach((c) => c.classList.remove('selected'));
       card.classList.add('selected');
-      const azurePanel = $('#azurePanel');
-      azurePanel.style.display = value === 'azure' ? 'block' : 'none';
-      if (value !== 'azure') {
-        state.azureKey = '';
-        state.azureRegion = '';
-      }
     });
   });
-
-  $('#azureKey').addEventListener('input', (e) => { state.azureKey = e.target.value.trim(); });
-  $('#azureRegion').addEventListener('input', (e) => { state.azureRegion = e.target.value.trim(); });
 
   // ── Wire up: Whisper screen ───────────────────────────────────────
   const installLog = $('#installLog');
@@ -207,87 +182,34 @@
     detectStatus.querySelector('.text').textContent = text;
   }
 
-  async function runWhisperDetect() {
-    detectCmd.textContent = 'scanning…';
-    setDetectStatus('testing', 'Probing');
+  async function runWhisperEngineCheck() {
+    detectCmd.textContent = 'checking…';
+    setDetectStatus('testing', 'Checking');
     try {
-      const r = await window.electronAPI.detectWhisper();
-      if (r.found) {
-        state.whisperDetected = true;
-        state.whisperCmd = r.command;
-        detectCmd.textContent = r.command;
-        setDetectStatus('success', `Found v${r.version || '?'}`);
-        appendLog(`✓ Detected Whisper CLI: ${r.command}`);
+      // The whisper.cpp engine is built into the app — there is NO user install
+      // step (the deleted Python detect/install path is gone). We only surface
+      // whether the binary is present; the voice model download is the next
+      // screen. getWhisperStatus() → { binaryPresent, modelPresent, serverUp }.
+      const s = (await window.electronAPI.getWhisperStatus()) || {};
+      state.whisperDetected = !!s.binaryPresent;
+      if (s.binaryPresent) {
+        detectCmd.textContent = 'whisper.cpp (built-in)';
+        setDetectStatus('success', 'Voice engine ready');
+        appendLog('✓ Resident whisper.cpp voice engine is built into OpenCluely.');
+        appendLog(s.modelPresent
+          ? '✓ Voice model already downloaded.'
+          : '· Voice model will be downloaded on the next step.');
       } else {
         detectCmd.textContent = 'not found';
-        setDetectStatus('error', 'Not installed');
-        appendLog('✗ No Whisper CLI detected on PATH or in known venvs');
+        setDetectStatus('error', 'Engine missing');
+        appendLog('✗ Voice engine binary is missing — reinstall or rebuild the app to restore it. You can skip voice for now.');
       }
     } catch (e) {
-      setDetectStatus('error', 'Probe failed');
-      appendLog(`! Detection error: ${e.message || e}`);
-    }
-  }
-
-  async function runWhisperInstall() {
-    const btn = document.getElementById('installWhisperBtn');
-    installLog.textContent = '';
-    setDetectStatus('testing', 'Installing');
-    appendLog('Starting install…');
-
-    // Lock the button while installing so the user can't double-click
-    // and spawn parallel installs. Change the label to "Installing…"
-    // with a spinner so they see real progress.
-    if (btn) {
-      btn.disabled = true;
-      btn.dataset.originalHtml = btn.dataset.originalHtml || btn.innerHTML;
-      btn.innerHTML = '<span class="spinner"></span> Installing…';
-    }
-
-    // Subscribe to streamed progress lines from the main process.
-    // `installWhisper()` only returns once install completes; live
-    // output comes through `onInstallProgress` events.
-    let progressHandler = null;
-    if (window.electronAPI && window.electronAPI.onInstallProgress) {
-      progressHandler = (line) => appendLog(line);
-      window.electronAPI.onInstallProgress(progressHandler);
-    }
-
-    try {
-      const r = await window.electronAPI.installWhisper();
-      if (r.ok) {
-        state.whisperDetected = true;
-        state.whisperCmd = r.command;
-        detectCmd.textContent = r.command;
-        setDetectStatus('success', 'Installed');
-        appendLog(`\n✓ ${r.message}`);
-        if (btn) {
-          // Keep button disabled — install is done. Show a checkmark
-          // so the user sees the final state at a glance.
-          btn.innerHTML = '<i class="fas fa-check-circle"></i> Installed';
-          btn.classList.remove('primary');
-          btn.classList.add('success');
-        }
-      } else {
-        setDetectStatus('error', 'Install failed');
-        appendLog(`\n✗ ${r.message}`);
-        // Restore the button so the user can retry.
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = btn.dataset.originalHtml || '<i class="fas fa-download"></i> Install Whisper now';
-        }
-      }
-    } catch (e) {
-      setDetectStatus('error', 'Install error');
-      appendLog(`\n! ${e.message || e}`);
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = btn.dataset.originalHtml || '<i class="fas fa-download"></i> Install Whisper now';
-      }
-    } finally {
-      if (progressHandler && window.electronAPI.removeAllListeners) {
-        try { window.electronAPI.removeAllListeners('install-progress'); } catch (_) { /* ignore */ }
-      }
+      // Bridge/status unavailable — degrade to a friendly line, never crash.
+      state.whisperDetected = false;
+      detectCmd.textContent = 'unavailable';
+      setDetectStatus('error', 'Status unavailable');
+      appendLog(`! Could not check the voice engine: ${e.message || e}`);
     }
   }
 
@@ -296,48 +218,23 @@
   function enterWhisperScreen() {
     if (whisperInitialized) return;
     whisperInitialized = true;
-    const hints = {
-      win32: {
-        title: "We'll create a project-local venv and install openai-whisper",
-        steps: [
-          'Python 3.10+ must be on PATH (download from python.org if missing).',
-          'A new <code>.venv-whisper\\</code> folder will be created in the app directory.',
-          'Whisper will be installed into that venv (pip download, no admin rights needed).',
-          'First transcription downloads the <code>turbo</code> model (~150 MB).',
-        ],
-      },
-      darwin: {
-        title: "We'll create a project-local venv and install openai-whisper",
-        steps: [
-          'Uses your existing Python 3 (install via Homebrew if missing).',
-          'A new <code>.venv-whisper/</code> folder is created in the app data directory.',
-          'Whisper installs into that venv — no <code>sudo</code> required.',
-          'First transcription downloads the <code>turbo</code> model (~150 MB).',
-        ],
-      },
-      other: {
-        title: "We'll create a project-local venv and install openai-whisper",
-        steps: [
-          'Uses your system Python 3 (needs <code>python3-venv</code> on Debian/Ubuntu).',
-          'A new <code>.venv-whisper/</code> folder is created in the app data directory.',
-          'Whisper installs into that venv — avoids the externally-managed-environment error.',
-          'First transcription downloads the <code>turbo</code> model (~150 MB).',
-        ],
-      },
-    };
-    const plat = navigator.platform.toLowerCase().includes('win')
-      ? 'win32'
-      : navigator.platform.toLowerCase().includes('mac')
-        ? 'darwin'
-        : 'other';
-    const h = hints[plat];
-    installCardTitle.textContent = h.title;
-    installList.innerHTML = h.steps.map((s) => `<li>${s}</li>`).join('');
-    runWhisperDetect();
+    // Resident-engine copy: no venv, no pip, no per-platform Python guidance.
+    // The whisper.cpp engine ships with the app; the only first-run step is the
+    // one-time voice-model download on the next screen.
+    installCardTitle.textContent = 'How local voice input works';
+    const steps = [
+      'The whisper.cpp voice engine is built into OpenCluely — nothing to install.',
+      'The only first-run step is downloading the <code>ggml-small.en</code> English voice model (~488 MB).',
+      'The model is cached in your app data folder, resumes if interrupted, and works offline afterward.',
+    ];
+    installList.innerHTML = steps.map((s) => `<li>${s}</li>`).join('');
+    runWhisperEngineCheck();
   }
 
   // ── Wire up: Model Download screen ───────────────────────────────
   const modelDownloadLog = $('#modelDownloadLog');
+  const modelDownloadBar = $('#modelDownloadBar');
+  const modelDownloadStatus = $('#modelDownloadStatus');
 
   function appendModelLog(line) {
     modelDownloadLog.textContent += (modelDownloadLog.textContent ? '\n' : '') + line;
@@ -378,40 +275,69 @@
     }
   }
 
+  // Human-readable megabytes for the structured download progress.
+  function _mb(n) {
+    return (typeof n === 'number' && isFinite(n)) ? `${(n / (1024 * 1024)).toFixed(0)} MB` : '';
+  }
+
   async function startModelDownload() {
     state.modelDownloading = true;
     nextBtn.disabled = true;
     nextBtn.innerHTML = '<span class="spinner"></span> Downloading…';
 
-    appendModelLog('Starting model download…');
+    if (modelDownloadBar) modelDownloadBar.style.width = '0%';
+    if (modelDownloadStatus) modelDownloadStatus.textContent = 'Starting download…';
+    appendModelLog('Downloading ggml-small.en voice model…');
 
-    let progressHandler = null;
+    // The ggml downloader streams STRUCTURED { percent, downloadedBytes,
+    // totalBytes } over the reused `install-progress` channel (04-02/04-03),
+    // not raw log lines. Render percent into the bar; guard defensively for a
+    // possibly-string payload. onInstallProgress returns an unsubscribe fn.
+    let unsubscribe = null;
     if (window.electronAPI && window.electronAPI.onInstallProgress) {
-      progressHandler = (line) => appendModelLog(line);
-      window.electronAPI.onInstallProgress(progressHandler);
+      unsubscribe = window.electronAPI.onInstallProgress((p) => {
+        if (!p) return;
+        if (typeof p === 'string') { appendModelLog(p); return; }
+        if (typeof p.percent === 'number') {
+          if (modelDownloadBar) modelDownloadBar.style.width = `${p.percent}%`;
+          if (modelDownloadStatus) modelDownloadStatus.textContent = `Downloading — ${p.percent}%`;
+        }
+        const parts = [];
+        if (typeof p.percent === 'number') parts.push(`${p.percent}%`);
+        if (typeof p.downloadedBytes === 'number' && typeof p.totalBytes === 'number') {
+          parts.push(`${_mb(p.downloadedBytes)} / ${_mb(p.totalBytes)}`);
+        }
+        if (parts.length) appendModelLog(parts.join('  ·  '));
+      });
     }
 
     try {
-      const r = await window.electronAPI.downloadWhisperModel('turbo');
+      const r = await window.electronAPI.downloadWhisperModel('small.en');
       state.modelDownloading = false;
-      if (r.ok) {
+      if (r && r.ok) {
         state.modelDownloaded = true;
-        appendModelLog(`\n✓ Model downloaded successfully: ${r.path}`);
+        if (modelDownloadBar) modelDownloadBar.style.width = '100%';
+        if (modelDownloadStatus) modelDownloadStatus.textContent = 'Voice model ready';
+        appendModelLog(`\n✓ Voice model ready${r.path ? `: ${r.path}` : ''}`);
         nextBtn.disabled = false;
         nextBtn.classList.remove('primary');
         nextBtn.classList.add('success');
         nextBtn.innerHTML = '<i class="fas fa-check-circle"></i> Continue';
       } else {
-        appendModelLog(`\n✗ Download failed: ${r.message}`);
-        // Let user continue anyway; they'll download on first use
+        if (modelDownloadStatus) modelDownloadStatus.textContent = 'Download did not finish';
+        appendModelLog(`\n✗ Download failed: ${(r && r.message) || 'unknown error'} — you can continue anyway; it resumes on retry.`);
+        // Let user continue anyway; they'll download on first use / retry.
         nextBtn.disabled = false;
       }
     } catch (e) {
       state.modelDownloading = false;
-      appendModelLog(`\n! Error: ${e.message || e}`);
+      if (modelDownloadStatus) modelDownloadStatus.textContent = 'Download error';
+      appendModelLog(`\n! Error: ${e.message || e} — you can continue anyway; it resumes on retry.`);
       nextBtn.disabled = false;
     } finally {
-      if (progressHandler && window.electronAPI.removeAllListeners) {
+      if (typeof unsubscribe === 'function') {
+        try { unsubscribe(); } catch (_) { /* ignore */ }
+      } else if (window.electronAPI && window.electronAPI.removeAllListeners) {
         try { window.electronAPI.removeAllListeners('install-progress'); } catch (_) { /* ignore */ }
       }
     }
@@ -590,14 +516,8 @@
     if (state.speechProvider === 'whisper') {
       rows.push({
         label: '<i class="fas fa-microphone"></i> Speech',
-        value: state.whisperDetected ? `Whisper (${state.whisperCmd || 'cli'})` : 'Whisper (not installed)',
+        value: state.whisperDetected ? 'Local voice engine (whisper.cpp)' : 'Voice engine unavailable',
         cls: state.whisperDetected ? 'ok' : 'skip',
-      });
-    } else if (state.speechProvider === 'azure') {
-      rows.push({
-        label: '<i class="fas fa-cloud"></i> Speech',
-        value: 'Azure',
-        cls: 'ok',
       });
     } else {
       rows.push({
@@ -648,37 +568,9 @@
       return;
     }
 
-    // Persist speech settings on the speech screen (Azure path).
-    if (name === 'speech' && window.electronAPI) {
-      try {
-        const payload = {
-          speechProvider:
-            state.speechProvider === 'skip' ? 'whisper' : state.speechProvider,
-        };
-        if (state.speechProvider === 'azure') {
-          payload.azureKey = state.azureKey;
-          payload.azureRegion = state.azureRegion;
-        }
-        if (state.speechProvider === 'whisper' && state.whisperCmd) {
-          payload.whisperCommand = quoteCommandIfNeeded(state.whisperCmd);
-        }
-        await window.electronAPI.saveSettings(payload);
-      } catch (_) { /* surfaced elsewhere */ }
-    }
-
     // Whisper screen: kick off detection on entry
     if (name === 'speech' && state.speechProvider === 'whisper') {
       // (deferred: will run via enterWhisperScreen)
-    }
-
-    // Whisper screen "Continue" — if user wants to skip install, mark and proceed
-    if (name === 'whisper') {
-      // Persist whatever whisper command we found (could be empty if skipped)
-      if (window.electronAPI && state.whisperCmd) {
-        try {
-          await window.electronAPI.saveSettings({ whisperCommand: quoteCommandIfNeeded(state.whisperCmd) });
-        } catch (_) { /* ignore */ }
-      }
     }
 
     // Model download screen: persist choice
@@ -756,26 +648,6 @@
     showScreen(finishName);
     populateSummary();
   });
-
-  // ── Manual install button (added dynamically) ─────────────────────
-  function addManualInstallButton() {
-    if (document.getElementById('installWhisperBtn')) return;
-    const btn = document.createElement('button');
-    btn.id = 'installWhisperBtn';
-    btn.type = 'button';
-    btn.className = 'btn primary';
-    btn.style.marginTop = '12px';
-    btn.innerHTML = '<i class="fas fa-download"></i> Install Whisper now';
-    btn.addEventListener('click', runWhisperInstall);
-    document.querySelector('[data-screen="whisper"]').appendChild(btn);
-  }
-
-  // Show install button after detection runs and finds nothing
-  const _origDetect = runWhisperDetect;
-  runWhisperDetect = async function () {
-    await _origDetect();
-    if (!state.whisperDetected) addManualInstallButton();
-  };
 
   // ── Boot ──────────────────────────────────────────────────────────
   showScreen('welcome');

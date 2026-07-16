@@ -1,399 +1,8 @@
-// Enhanced polyfills for Azure Speech SDK in Node.js environment
-if (typeof window === 'undefined') {
-  global.window = {
-    navigator: {
-      userAgent: 'Node.js',
-      platform: 'node',
-      mediaDevices: {
-        getUserMedia: () => Promise.resolve({
-          getAudioTracks: () => [],
-          getTracks: () => [],
-          stop: () => {}
-        }),
-        getSupportedConstraints: () => ({
-          audio: true,
-          video: false,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: true,
-          sampleSize: true,
-          channelCount: true
-        }),
-        enumerateDevices: () => Promise.resolve([
-          {
-            deviceId: 'default',
-            kind: 'audioinput',
-            label: 'Default - Microphone',
-            groupId: 'default'
-          }
-        ])
-      }
-    },
-    document: {
-      createElement: (tagName) => {
-        const element = {
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          setAttribute: () => {},
-          getAttribute: () => null,
-          style: {},
-          tagName: tagName.toUpperCase(),
-          nodeType: 1,
-          nodeName: tagName.toUpperCase(),
-          appendChild: () => {},
-          removeChild: () => {},
-          insertBefore: () => {},
-          cloneNode: () => element,
-          hasAttribute: () => false,
-          removeAttribute: () => {},
-          click: () => {},
-          focus: () => {},
-          blur: () => {}
-        };
-
-        if (tagName.toLowerCase() === 'audio') {
-          Object.assign(element, {
-            play: () => Promise.resolve(),
-            pause: () => {},
-            load: () => {},
-            canPlayType: () => 'probably',
-            volume: 1,
-            muted: false,
-            paused: true,
-            ended: false,
-            currentTime: 0,
-            duration: 0,
-            playbackRate: 1,
-            defaultPlaybackRate: 1,
-            readyState: 4,
-            networkState: 1,
-            autoplay: false,
-            loop: false,
-            controls: false,
-            crossOrigin: null,
-            preload: 'metadata',
-            src: '',
-            currentSrc: ''
-          });
-        }
-
-        return element;
-      },
-      getElementById: () => null,
-      getElementsByTagName: () => [],
-      getElementsByClassName: () => [],
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      body: {
-        appendChild: () => {},
-        removeChild: () => {},
-        insertBefore: () => {},
-        style: {}
-      },
-      head: {
-        appendChild: () => {},
-        removeChild: () => {},
-        insertBefore: () => {},
-        style: {}
-      }
-    },
-    location: {
-      href: 'file:///',
-      protocol: 'file:',
-      host: '',
-      hostname: '',
-      port: '',
-      pathname: '/',
-      search: '',
-      hash: '',
-      origin: 'file://'
-    },
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    setTimeout: global.setTimeout,
-    clearTimeout: global.clearTimeout,
-    setInterval: global.setInterval,
-    clearInterval: global.clearInterval,
-    requestAnimationFrame: (callback) => global.setTimeout(callback, 16),
-    cancelAnimationFrame: global.clearTimeout,
-    console: global.console || {
-      log: () => {},
-      error: () => {},
-      warn: () => {},
-      info: () => {},
-      debug: () => {}
-    },
-    AudioContext: class AudioContext {
-      constructor() {
-        this.state = 'running';
-        this.sampleRate = 16000;
-        this.currentTime = 0;
-        this.listener = {
-          setPosition: () => {},
-          setOrientation: () => {}
-        };
-        this.destination = {
-          connect: () => {},
-          disconnect: () => {},
-          channelCount: 2,
-          channelCountMode: 'explicit',
-          channelInterpretation: 'speakers'
-        };
-      }
-      createMediaStreamSource(stream) {
-        return {
-          connect: () => {},
-          disconnect: () => {},
-          mediaStream: stream
-        };
-      }
-      createGain() {
-        return {
-          connect: () => {},
-          disconnect: () => {},
-          gain: {
-            value: 1,
-            setValueAtTime: () => {},
-            linearRampToValueAtTime: () => {},
-            exponentialRampToValueAtTime: () => {}
-          }
-        };
-      }
-      createScriptProcessor(bufferSize = 4096, inputChannels = 1, outputChannels = 1) {
-        return {
-          connect: () => {},
-          disconnect: () => {},
-          onaudioprocess: null,
-          bufferSize,
-          numberOfInputs: inputChannels,
-          numberOfOutputs: outputChannels
-        };
-      }
-      createAnalyser() {
-        return {
-          connect: () => {},
-          disconnect: () => {},
-          fftSize: 2048,
-          frequencyBinCount: 1024,
-          minDecibels: -100,
-          maxDecibels: -30,
-          smoothingTimeConstant: 0.8,
-          getByteFrequencyData: () => {},
-          getByteTimeDomainData: () => {},
-          getFloatFrequencyData: () => {},
-          getFloatTimeDomainData: () => {}
-        };
-      }
-      decodeAudioData() {
-        return Promise.resolve({
-          length: 44100,
-          sampleRate: 44100,
-          numberOfChannels: 1,
-          duration: 1,
-          getChannelData: () => new Float32Array(44100)
-        });
-      }
-      suspend() {
-        this.state = 'suspended';
-        return Promise.resolve();
-      }
-      resume() {
-        this.state = 'running';
-        return Promise.resolve();
-      }
-      close() {
-        this.state = 'closed';
-        return Promise.resolve();
-      }
-    },
-    webkitAudioContext: class webkitAudioContext {
-      constructor() {
-        this.state = 'running';
-        this.sampleRate = 16000;
-        this.currentTime = 0;
-        this.listener = {
-          setPosition: () => {},
-          setOrientation: () => {}
-        };
-        this.destination = {
-          connect: () => {},
-          disconnect: () => {},
-          channelCount: 2,
-          channelCountMode: 'explicit',
-          channelInterpretation: 'speakers'
-        };
-      }
-      createMediaStreamSource(stream) {
-        return {
-          connect: () => {},
-          disconnect: () => {},
-          mediaStream: stream
-        };
-      }
-      createGain() {
-        return {
-          connect: () => {},
-          disconnect: () => {},
-          gain: {
-            value: 1,
-            setValueAtTime: () => {},
-            linearRampToValueAtTime: () => {},
-            exponentialRampToValueAtTime: () => {}
-          }
-        };
-      }
-      createScriptProcessor(bufferSize = 4096, inputChannels = 1, outputChannels = 1) {
-        return {
-          connect: () => {},
-          disconnect: () => {},
-          onaudioprocess: null,
-          bufferSize,
-          numberOfInputs: inputChannels,
-          numberOfOutputs: outputChannels
-        };
-      }
-      createAnalyser() {
-        return {
-          connect: () => {},
-          disconnect: () => {},
-          fftSize: 2048,
-          frequencyBinCount: 1024,
-          minDecibels: -100,
-          maxDecibels: -30,
-          smoothingTimeConstant: 0.8,
-          getByteFrequencyData: () => {},
-          getByteTimeDomainData: () => {},
-          getFloatFrequencyData: () => {},
-          getFloatTimeDomainData: () => {}
-        };
-      }
-      decodeAudioData() {
-        return Promise.resolve({
-          length: 44100,
-          sampleRate: 44100,
-          numberOfChannels: 1,
-          duration: 1,
-          getChannelData: () => new Float32Array(44100)
-        });
-      }
-      suspend() {
-        this.state = 'suspended';
-        return Promise.resolve();
-      }
-      resume() {
-        this.state = 'running';
-        return Promise.resolve();
-      }
-      close() {
-        this.state = 'closed';
-        return Promise.resolve();
-      }
-    },
-    URL: class URL {
-      constructor(url) {
-        this.href = url;
-        this.protocol = 'https:';
-        this.host = 'localhost';
-        this.hostname = 'localhost';
-        this.port = '';
-        this.pathname = '/';
-        this.search = '';
-        this.hash = '';
-        this.origin = 'https://localhost';
-      }
-      toString() {
-        return this.href;
-      }
-    },
-    Blob: class Blob {
-      constructor(parts = [], options = {}) {
-        this.size = 0;
-        this.type = options.type || '';
-        this.parts = parts;
-      }
-      slice() {
-        return new Blob();
-      }
-      stream() {
-        return new ReadableStream();
-      }
-      text() {
-        return Promise.resolve('');
-      }
-      arrayBuffer() {
-        return Promise.resolve(new ArrayBuffer(0));
-      }
-    },
-    File: class File {
-      constructor(parts, name, options = {}) {
-        this.name = name;
-        this.size = 0;
-        this.type = options.type || '';
-        this.lastModified = Date.now();
-        this.parts = parts;
-      }
-      slice() {
-        return new File([], this.name);
-      }
-      stream() {
-        return new ReadableStream();
-      }
-      text() {
-        return Promise.resolve('');
-      }
-      arrayBuffer() {
-        return Promise.resolve(new ArrayBuffer(0));
-      }
-    }
-  };
-  global.document = global.window.document;
-  global.navigator = global.window.navigator;
-  global.AudioContext = global.window.AudioContext;
-  global.webkitAudioContext = global.window.webkitAudioContext;
-  global.URL = global.window.URL;
-  global.Blob = global.window.Blob;
-  global.File = global.window.File;
-
-  if (!global.performance) {
-    global.performance = {
-      now: () => Date.now(),
-      mark: () => {},
-      measure: () => {},
-      clearMarks: () => {},
-      clearMeasures: () => {},
-      getEntriesByName: () => [],
-      getEntriesByType: () => []
-    };
-  }
-
-  if (!global.crypto) {
-    global.crypto = {
-      getRandomValues: (arr) => {
-        for (let i = 0; i < arr.length; i++) {
-          arr[i] = Math.floor(Math.random() * 256);
-        }
-        return arr;
-      }
-    };
-  }
-}
-
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const { EventEmitter } = require('events');
 const logger = require('../core/logger').createServiceLogger('SPEECH');
 const config = require('../core/config');
 const VadSegmenter = require('../core/vad-segmenter');
-
-let sdk = null;
-try {
-  sdk = require('microsoft-cognitiveservices-speech-sdk');
-} catch (error) {
-  logger.warn('Azure Speech SDK unavailable', { error: error.message });
-}
 
 let recorder = null;
 try {
@@ -405,137 +14,177 @@ try {
 class SpeechService extends EventEmitter {
   constructor() {
     super();
-    this.recognizer = null;
     this.isRecording = false;
-    this.audioConfig = null;
-    this.speechConfig = null;
     this.sessionStartTime = null;
     this.retryCount = 0;
-    this.maxRetries = 3;
-    this.pushStream = null;
     this.recording = null;
     this.available = false;
     this.provider = 'disabled';
     this.runtimeSettings = {};
-    this.segmentBuffers = [];
-    this.segmentBytes = 0;
     this.segmentTimer = null;
-    this.transcriptionInFlight = false;
-    this.pendingFlush = false;
-    this.pendingFinal = false;
     this.audioProgram = null;
-    this.whisperCommand = null;
-    this._segmenter = new VadSegmenter();
+    // Injected by main.js after the resident whisper-server is started (04-03).
+    // NEVER constructed here: the module export is a singleton and importing it
+    // (including in tests) must never spawn a server.
+    this.whisperServerManager = null;
+
+    // Two independent per-channel pipelines (STT-04): the mic renderer path and
+    // the macOS system-audio tap path (04-05), each with its own VadSegmenter +
+    // buffers + flush serialization so a mic flush in-flight never strands a
+    // system utterance and vice-versa. Both SHARE one VAD tuning block (read via
+    // the _get*() getters) — do NOT diverge the tuning. The system channel stays
+    // dormant until its tap enables it, so the mic-only path is unchanged.
+    this.systemChannelEnabled = false;
+    this._channels = {
+      mic: this._makeChannel('mic'),
+      system: this._makeChannel('system'),
+    };
     this._resetVadState();
 
     this.initializeClient();
   }
 
-  initializeClient() {
-    this._cleanup();
-    this.provider = 'disabled';
-    this.available = false;
-    this.speechConfig = null;
-    this.whisperCommand = null;
-
-    const provider = this._getConfiguredProvider();
-    this.provider = provider;
-
-    if (provider === 'azure') {
-      this._initializeAzureClient();
-      return;
-    }
-
-    if (provider === 'whisper') {
-      this._initializeWhisperClient();
-      return;
-    }
-
-    const reason = 'Speech recognition disabled. Configure Azure or local Whisper.';
-    logger.warn(reason);
-    this.emit('status', reason);
+  /**
+   * One independent capture→segment→flush pipeline. Created twice (mic +
+   * system). Holds its own VadSegmenter + segment buffers + the
+   * inFlight/pendingFlush/pendingFinal serialization so the two channels
+   * transcribe independently against the same resident whisper-server. Both
+   * channels read ONE shared VAD tuning block (the _get*() getters); the two
+   * segmenter instances are intentionally identical for Phase 4. NOTE:
+   * system/line-level audio MAY want a per-channel vadEnergyFloor override in a
+   * future tuning pass — do NOT diverge now (locked).
+   */
+  _makeChannel(source) {
+    return {
+      source,
+      segmenter: new VadSegmenter(),
+      buffers: [],
+      bytes: 0,
+      inFlight: false,
+      pendingFlush: false,
+      pendingFinal: false,
+      vadSpeaking: false,
+      vadSpeechMs: 0,
+      vadLastChunkAt: 0,
+    };
   }
 
-  _initializeAzureClient() {
-    try {
-      if (!sdk) {
-        throw new Error('Azure Speech SDK dependency is not installed');
-      }
+  /**
+   * Enable/disable the system-audio channel. 04-05's SystemAudioTapManager
+   * flips this on once the macOS Core Audio process tap is capturing; until
+   * then handleSystemAudioChunk is a no-op and the mic path is the only active
+   * pipeline.
+   */
+  setSystemChannelEnabled(enabled) {
+    this.systemChannelEnabled = !!enabled;
+  }
 
-      if (!recorder || typeof recorder.record !== 'function') {
-        throw new Error('Local microphone recorder dependency is not installed');
-      }
+  initializeClient() {
+    this._cleanup();
+    // The resident whisper.cpp engine is the SOLE speech provider now — the
+    // former cloud STT SDK and its ~380-line browser-DOM polyfill were removed,
+    // so there is no provider selection: STT always initializes the local engine.
+    this.provider = 'whisper';
+    this.available = false;
 
-      const subscriptionKey = this._getSetting('azureKey') || process.env.AZURE_SPEECH_KEY;
-      const region = this._getSetting('azureRegion') || process.env.AZURE_SPEECH_REGION;
+    this._initializeWhisperClient();
+  }
 
-      if (!subscriptionKey || !region) {
-        const reason = 'Azure Speech credentials not found. Speech recognition disabled.';
-        logger.warn('Speech service disabled (missing Azure credentials)');
-        this.emit('status', reason);
-        return;
-      }
-
-      this.speechConfig = sdk.SpeechConfig.fromSubscription(subscriptionKey, region);
-
-      const azureConfig = config.get('speech.azure') || {};
-      this.speechConfig.speechRecognitionLanguage = azureConfig.language || 'en-US';
-      this.speechConfig.outputFormat = sdk.OutputFormat.Detailed;
-      this.speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, '5000');
-      this.speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, '2000');
-      this.speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, '2000');
-
-      if (azureConfig.enableDictation) {
-        this.speechConfig.enableDictation();
-      }
-
-      if (azureConfig.enableAudioLogging) {
-        this.speechConfig.enableAudioLogging();
-      }
-
-      this.available = true;
-      logger.info('Azure Speech service initialized successfully', {
-        region,
-        language: azureConfig.language || 'en-US'
-      });
-      this.emit('status', 'Azure Speech Services ready');
-    } catch (error) {
-      logger.error('Failed to initialize Azure Speech client', {
-        error: error.message,
-        stack: error.stack
-      });
-      this.available = false;
-      this.emit('status', 'Azure speech unavailable');
+  /**
+   * Inject the started resident whisper-server manager (04-03, STT-01/SC1).
+   * main.js hands the singleton in after app.whenReady() →
+   * getWhisperServerManager().start(), so the flush seam transcribes against
+   * the RESIDENT engine (no per-utterance spawn). Re-evaluates availability +
+   * status the moment it lands — the constructor ran at import time, before any
+   * manager existed. NEVER constructs a manager here (tests must not spawn).
+   */
+  setWhisperServerManager(manager) {
+    this.whisperServerManager = manager || null;
+    if (this.provider === 'whisper') {
+      this._initializeWhisperClient();
     }
   }
 
   _initializeWhisperClient() {
     try {
-      this.whisperCommand = this._resolveWhisperCommand();
-      if (!this.whisperCommand) {
-        const reason = 'Local Whisper unavailable. Install the Whisper CLI or set WHISPER_COMMAND.';
-        logger.warn(reason);
-        this.emit('status', reason);
+      // The resident engine IS the whisper provider now (no Python CLI). Read
+      // its three health levels and surface three distinct inline messages
+      // (Pitfall 4): binary → model → server up. Availability requires the
+      // server up AND the model on disk.
+      const health = this._whisperResidentHealth();
+      this.available = false;
+
+      if (!this.whisperServerManager) {
+        // Injected by main.js after app-ready start(); until then the resident
+        // engine simply isn't ready. Not an error — degrade quietly.
+        this.emit('status', 'Voice engine initializing…');
+        return;
+      }
+      if (!health.binaryPresent) {
+        this.emit('status', 'Voice engine unavailable — build the whisper-server binary');
+        return;
+      }
+      if (!health.modelPresent) {
+        this.emit('status', 'Voice model missing — download the voice model');
+        return;
+      }
+      if (!health.serverUp) {
+        this.emit('status', 'Voice engine down — retry');
         return;
       }
 
       this.available = true;
-      logger.info('Local Whisper service initialized successfully', {
-        command: [this.whisperCommand.command, ...this.whisperCommand.baseArgs].join(' '),
+      logger.info('Resident Whisper engine ready', {
         model: this._getWhisperModel(),
-        language: this._getWhisperLanguage()
+        language: this._getWhisperLanguage(),
       });
       this.emit('status', 'Local Whisper ready');
     } catch (error) {
-      logger.error('Failed to initialize local Whisper client', {
+      logger.error('Failed to initialize resident Whisper client', {
         error: error.message,
-        stack: error.stack
+        stack: error.stack,
       });
       this.available = false;
       this.emit('status', 'Local Whisper unavailable');
     }
   }
 
+  /**
+   * Synchronous three-level health of the injected resident whisper-server,
+   * read straight off the manager's sync surface (resolved binary path,
+   * on-disk model, supervisor lifecycle state) so isAvailable()/getStatus()
+   * stay synchronous. The level-4 responding probe is async and used only by
+   * testConnection().
+   */
+  _whisperResidentHealth() {
+    const mgr = this.whisperServerManager;
+    if (!mgr) {
+      return { binaryPresent: false, modelPresent: false, serverUp: false };
+    }
+    let binaryPresent = false;
+    let modelPresent = false;
+    let serverUp = false;
+    try { binaryPresent = !!mgr.binaryPath; } catch (_) { binaryPresent = false; }
+    try { modelPresent = typeof mgr.modelPresent === 'function' ? !!mgr.modelPresent() : false; } catch (_) { modelPresent = false; }
+    try {
+      const s = mgr.supervisor && typeof mgr.supervisor.getStatus === 'function'
+        ? mgr.supervisor.getStatus()
+        : null;
+      serverUp = !!s && (s.state === 'healthy' || s.state === 'adopted');
+    } catch (_) { serverUp = false; }
+    return { binaryPresent, modelPresent, serverUp };
+  }
+
+  /**
+   * Start (ambient) listening. STT-03/SC3: main.js auto-calls this from launch
+   * so the stream stays open launch→quit; the mic button + Alt+R re-enter it as
+   * the interim on/off. IDEMPOTENT: a second call while already recording is a
+   * no-op (the `isRecording` guard below), so a double auto-start / mic-button
+   * mash can't spawn two capture pipelines. Starting brings up BOTH channels —
+   * the mic pipeline (renderer getUserMedia or the native recorder) and, once
+   * the 04-05 tap enables it, the system pipeline (its ingest is gated on
+   * `isRecording`, so it follows this start/stop too).
+   */
   startRecording() {
     try {
       if (!this.available) {
@@ -553,17 +202,7 @@ class SpeechService extends EventEmitter {
       this.sessionStartTime = Date.now();
       this.retryCount = 0;
 
-      if (this.provider === 'azure') {
-        this._startAzureRecording();
-        return;
-      }
-
-      if (this.provider === 'whisper') {
-        this._startWhisperRecording();
-        return;
-      }
-
-      throw new Error(`Unsupported speech provider: ${this.provider}`);
+      this._startWhisperRecording();
     } catch (error) {
       logger.error('Critical error in startRecording', { error: error.message, stack: error.stack });
       this.emit('error', `Speech recognition failed to start: ${error.message}`);
@@ -571,116 +210,13 @@ class SpeechService extends EventEmitter {
     }
   }
 
-  _startAzureRecording() {
-    if (!this.speechConfig) {
-      throw new Error('Azure Speech client not initialized');
-    }
-
-    this.isRecording = true;
-    this.emit('recording-started');
-    this.emit('status', 'Azure recording started');
-    this._cleanup();
-
-    try {
-      this.pushStream = sdk.AudioInputStream.createPushStream();
-      this.audioConfig = sdk.AudioConfig.fromStreamInput(this.pushStream);
-      this._startMicrophoneCapture();
-      this.recognizer = new sdk.SpeechRecognizer(this.speechConfig, this.audioConfig);
-    } catch (error) {
-      logger.error('Failed to start Azure recording session', { error: error.message });
-      this.emit('error', `Audio configuration failed: ${error.message}`);
-      this.isRecording = false;
-      return;
-    }
-
-    this.recognizer.recognizing = (s, e) => {
-      try {
-        if (e.result.reason === sdk.ResultReason.RecognizingSpeech) {
-          this.emit('interim-transcription', e.result.text);
-        }
-      } catch (error) {
-        logger.error('Error in recognizing handler', { error: error.message });
-      }
-    };
-
-    this.recognizer.recognized = (s, e) => {
-      try {
-        if (e.result.reason === sdk.ResultReason.RecognizedSpeech && e.result.text && e.result.text.trim()) {
-          this.emit('transcription', e.result.text);
-        }
-      } catch (error) {
-        logger.error('Error in recognized handler', { error: error.message });
-      }
-    };
-
-    this.recognizer.canceled = (s, e) => {
-      logger.warn('Recognition session canceled', {
-        reason: e.reason,
-        errorCode: e.errorCode,
-        errorDetails: e.errorDetails
-      });
-
-      if (e.reason === sdk.CancellationReason.Error) {
-        const details = e.errorDetails || '';
-        if (details.includes('1006')) {
-          this.emit('error', 'Network connection failed. Please check your internet connection.');
-        } else if (details.includes('InvalidServiceCredentials')) {
-          this.emit('error', 'Invalid Azure Speech credentials. Please check AZURE_SPEECH_KEY and AZURE_SPEECH_REGION.');
-        } else if (details.includes('Forbidden')) {
-          this.emit('error', 'Access denied. Please check your Azure Speech service subscription and region.');
-        } else if (details.includes('AudioInputMicrophone_InitializationFailure')) {
-          this.emit('error', 'Microphone initialization failed. Please check microphone permissions and availability.');
-        } else {
-          this.emit('error', `Recognition error: ${details}`);
-        }
-      }
-
-      this.stopRecording();
-    };
-
-    this.recognizer.sessionStarted = (s, e) => {
-      logger.info('Recognition session started', { sessionId: e.sessionId });
-    };
-
-    this.recognizer.sessionStopped = () => {
-      this.stopRecording();
-    };
-
-    const startTimeout = setTimeout(() => {
-      logger.error('Recognition start timeout');
-      this.emit('error', 'Speech recognition start timeout. Please try again.');
-      this.stopRecording();
-    }, 10000);
-
-    this.recognizer.startContinuousRecognitionAsync(
-      () => {
-        clearTimeout(startTimeout);
-        logger.info('Continuous Azure speech recognition started successfully');
-        if (global.windowManager) {
-          global.windowManager.handleRecordingStarted();
-        }
-      },
-      (error) => {
-        clearTimeout(startTimeout);
-        logger.error('Failed to start continuous recognition', { error: error.toString() });
-        this.emit('error', `Recognition startup failed: ${error}`);
-        this.isRecording = false;
-        this._cleanup();
-      }
-    );
-  }
-
   _startWhisperRecording() {
     this._cleanup();
     this.isRecording = true;
-    this.segmentBuffers = [];
-    this.segmentBytes = 0;
-    this.transcriptionInFlight = false;
-    this.pendingFlush = false;
-    this.pendingFinal = false;
+    this._resetChannelBuffers();
     this._resetVadState();
     this.emit('recording-started');
-    this.emit('status', 'Local Whisper recording started');
+    this.emit('status', 'Ambient listening started');
 
     // Capture microphone audio in the renderer via the Web Audio API on Windows
     // and macOS. Windows lacks the Unix sox/rec/arecord tools node-record-lpcm16
@@ -716,12 +252,54 @@ class SpeechService extends EventEmitter {
    * both the renderer (Web Audio) and native (sox/arecord) capture paths.
    */
   _resetVadState() {
-    // Legacy (VAD-disabled) path + watchdog still read these; the full
-    // speech/silence/noise-floor/pre-roll state now lives in this._segmenter.
-    this.vadSpeaking = false;        // currently inside an utterance
-    this.vadSpeechMs = 0;            // accumulated voiced audio in this segment
-    this.vadLastChunkAt = 0;         // timestamp of the last ingested chunk
-    this._segmenter.reset();
+    // Reset the VAD state machine for BOTH channels. The legacy (VAD-disabled)
+    // path + watchdog read the per-channel vad* scalars; the full
+    // speech/silence/noise-floor/pre-roll state lives in each channel.segmenter.
+    for (const channel of Object.values(this._channels)) {
+      channel.vadSpeaking = false;      // currently inside an utterance
+      channel.vadSpeechMs = 0;          // accumulated voiced audio in this segment
+      channel.vadLastChunkAt = 0;       // timestamp of the last ingested chunk
+      channel.segmenter.reset();
+    }
+  }
+
+  /**
+   * Reset ONE channel's VAD state + segment buffers for a mid-session re-attach
+   * (a mic device swap via the renderer's devicechange handler, or a sleep/wake
+   * re-acquire). Drops the truncated partial captured from the now-dead stream
+   * rather than transcribing a half-word, and resets the segmenter so the
+   * re-acquired stream begins a FRESH utterance. RE-ATTACH-SAFE: if a
+   * transcription is in-flight we DELIBERATELY leave the
+   * inFlight/pendingFlush/pendingFinal serialization untouched so the running
+   * flush completes cleanly — no double-flush, no stranded segment. Never
+   * throws (degrade-never-crash).
+   */
+  resetChannelForReattach(source = 'mic') {
+    const channel = this._channels[source];
+    if (!channel) {
+      return;
+    }
+    try {
+      channel.buffers = [];
+      channel.bytes = 0;
+      channel.vadSpeaking = false;
+      channel.vadSpeechMs = 0;
+      channel.vadLastChunkAt = 0;
+      channel.segmenter.reset();
+    } catch (_) {
+      // A reset must never take down the capture pipeline.
+    }
+  }
+
+  /** Reset the segment buffers + flush serialization for BOTH channels. */
+  _resetChannelBuffers() {
+    for (const channel of Object.values(this._channels)) {
+      channel.buffers = [];
+      channel.bytes = 0;
+      channel.inFlight = false;
+      channel.pendingFlush = false;
+      channel.pendingFinal = false;
+    }
   }
 
   /**
@@ -738,25 +316,38 @@ class SpeechService extends EventEmitter {
       if (!this.isRecording || this.provider !== 'whisper') {
         return;
       }
-
-      // VAD disabled (fallback): preserve the legacy fixed-window behaviour by
-      // flushing once the accumulated audio reaches the configured segment size.
-      if (!this._isVadEnabled()) {
-        if (this.segmentBytes && this.vadSpeechMs >= this._getWhisperSegmentMs()) {
-          this._endUtteranceFlush();
-        }
-        return;
-      }
-
-      // If we're mid-utterance and no audio has arrived recently, the mic may
-      // have stalled — flush what we captured rather than holding it forever.
-      const sinceLastChunk = this.vadLastChunkAt ? Date.now() - this.vadLastChunkAt : 0;
-      const stalled = this._segmenter.speaking && sinceLastChunk > 1500;
-      const tooLong = this._segmenter.speaking && this._segmenter.speechMs >= this._getMaxUtteranceMs();
-      if (stalled || tooLong) {
-        this._endUtteranceFlush();
+      // Backstop each channel independently (stall + max-utterance cap).
+      for (const channel of Object.values(this._channels)) {
+        this._watchdogTickChannel(channel);
       }
     }, 500);
+  }
+
+  /** Per-channel watchdog tick: flush a stalled or over-long utterance. */
+  _watchdogTickChannel(channel) {
+    // The system channel only ticks once its tap is enabled; the mic channel
+    // always ticks (mic behaviour unchanged).
+    if (channel.source === 'system' && !this.systemChannelEnabled) {
+      return;
+    }
+
+    // VAD disabled (fallback): preserve the legacy fixed-window behaviour by
+    // flushing once the accumulated audio reaches the configured segment size.
+    if (!this._isVadEnabled()) {
+      if (channel.bytes && channel.vadSpeechMs >= this._getWhisperSegmentMs()) {
+        this._endUtteranceFlush(channel);
+      }
+      return;
+    }
+
+    // If we're mid-utterance and no audio has arrived recently, the source may
+    // have stalled — flush what we captured rather than holding it forever.
+    const sinceLastChunk = channel.vadLastChunkAt ? Date.now() - channel.vadLastChunkAt : 0;
+    const stalled = channel.segmenter.speaking && sinceLastChunk > 1500;
+    const tooLong = channel.segmenter.speaking && channel.segmenter.speechMs >= this._getMaxUtteranceMs();
+    if (stalled || tooLong) {
+      this._endUtteranceFlush(channel);
+    }
   }
 
   /**
@@ -771,7 +362,25 @@ class SpeechService extends EventEmitter {
       return;
     }
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    this._ingestWhisperAudio(buffer);
+    this._ingestWhisperAudio(buffer, this._channels.mic);
+  }
+
+  /**
+   * Ingest path for the macOS system-audio tap (STT-04). 04-05's
+   * SystemAudioTapManager feeds raw 16 kHz mono 16-bit PCM here; gated on
+   * recording + systemChannelEnabled so the mic-only path is untouched until
+   * the tap lands. Drives the SECOND VadSegmenter + segment pipeline →
+   * whisper-server → transcript tagged source:'system'.
+   */
+  handleSystemAudioChunk(buffer) {
+    if (!this.isRecording || this.provider !== 'whisper' || !this.systemChannelEnabled) {
+      return;
+    }
+    if (!buffer || !buffer.length) {
+      return;
+    }
+    const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+    this._ingestWhisperAudio(buf, this._channels.system);
   }
 
   /**
@@ -780,26 +389,27 @@ class SpeechService extends EventEmitter {
    * once a natural pause (trailing silence) is detected. Falls back to plain
    * buffering when VAD is disabled.
    */
-  _ingestWhisperAudio(buffer) {
+  _ingestWhisperAudio(buffer, channel = this._channels.mic) {
     if (!buffer || !buffer.length) {
       return;
     }
 
     if (!this._isVadEnabled()) {
       // Legacy behaviour: the watchdog/max-utterance cap drives flushing.
-      this.segmentBuffers.push(buffer);
-      this.segmentBytes += buffer.length;
-      this.vadSpeaking = true;
-      this.vadSpeechMs += this._chunkDurationMs(buffer);
-      this.vadLastChunkAt = Date.now();
+      channel.buffers.push(buffer);
+      channel.bytes += buffer.length;
+      channel.vadSpeaking = true;
+      channel.vadSpeechMs += this._chunkDurationMs(buffer);
+      channel.vadLastChunkAt = Date.now();
       return;
     }
 
-    this.vadLastChunkAt = Date.now();
+    channel.vadLastChunkAt = Date.now();
     // Building the tuning object from the getters each call preserves the
-    // original per-chunk re-read of settings. The segmenter owns the VAD
+    // original per-chunk re-read of settings. BOTH channels read this ONE
+    // shared tuning block (locked). The channel's segmenter owns the VAD
     // decision and returns an action; buffer storage stays here.
-    const action = this._segmenter.ingest(buffer, {
+    const action = channel.segmenter.ingest(buffer, {
       energyFloor: this._getVadEnergyFloor(),
       silenceHangoverMs: this._getSilenceHangoverMs(),
       minUtteranceMs: this._getMinUtteranceMs(),
@@ -807,25 +417,25 @@ class SpeechService extends EventEmitter {
       preRollMs: this._getPreRollMs(),
     });
     for (const buf of action.buffers) {
-      this.segmentBuffers.push(buf);
-      this.segmentBytes += buf.length;
+      channel.buffers.push(buf);
+      channel.bytes += buf.length;
     }
     if (action.type === 'flush') {
-      this._endUtteranceFlush();
+      this._endUtteranceFlush(channel);
     } else if (action.type === 'discard') {
       // Net-identical to the original push-then-clear: drop the whole segment.
-      this.segmentBuffers = [];
-      this.segmentBytes = 0;
+      channel.buffers = [];
+      channel.bytes = 0;
     }
   }
 
   /** Flush the accumulated utterance and reset VAD for the next one. */
-  _endUtteranceFlush() {
-    this.vadSpeaking = false;
-    this.vadSpeechMs = 0;
-    this._segmenter.endUtterance();
-    this._flushWhisperSegment({ final: false }).catch((error) => {
-      logger.error('Whisper segment transcription failed', { error: error.message });
+  _endUtteranceFlush(channel = this._channels.mic) {
+    channel.vadSpeaking = false;
+    channel.vadSpeechMs = 0;
+    channel.segmenter.endUtterance();
+    this._flushWhisperSegment({ final: false }, channel).catch((error) => {
+      logger.error('Whisper segment transcription failed', { error: error.message, source: channel.source });
     });
   }
 
@@ -833,6 +443,15 @@ class SpeechService extends EventEmitter {
     return VadSegmenter.chunkDurationMs(buffer);
   }
 
+  /**
+   * Stop (pause) listening — the HONEST interim off switch this phase. Halts
+   * BOTH channels: the mic capture is torn down (the renderer stops its
+   * getUserMedia tracks on `recording-stopped`; the native recorder is stopped
+   * below) and the system-tap ingest is gated off (`handleSystemAudioChunk`
+   * no-ops while `isRecording` is false). IDEMPOTENT: a double-stop is a no-op
+   * (the guard below). The tap PROCESS itself keeps its 04-05 launch→quit
+   * lifecycle — pausing simply discards its samples.
+   */
   stopRecording() {
     if (!this.isRecording) {
       return;
@@ -845,30 +464,7 @@ class SpeechService extends EventEmitter {
       sessionDuration: `${sessionDuration}ms`
     });
 
-    if (this.provider === 'azure' && this.recognizer) {
-      try {
-        this.recognizer.stopContinuousRecognitionAsync(
-          () => {
-            this._finalizeStop('Recording stopped');
-          },
-          (error) => {
-            logger.error('Error during recognition stop', { error: error.toString() });
-            this._finalizeStop('Recording stopped');
-          }
-        );
-      } catch (error) {
-        logger.error('Error stopping recognizer', { error: error.message });
-        this._finalizeStop('Recording stopped');
-      }
-      return;
-    }
-
-    if (this.provider === 'whisper') {
-      this._finalizeWhisperStop();
-      return;
-    }
-
-    this._finalizeStop('Recording stopped');
+    this._finalizeWhisperStop();
   }
 
   async _finalizeWhisperStop() {
@@ -887,7 +483,13 @@ class SpeechService extends EventEmitter {
     }
 
     try {
-      await this._flushWhisperSegment({ final: true });
+      // Finalise BOTH channels. The system channel is empty (no bytes) when its
+      // tap is disabled, so this is a no-op there and the mic flush is unchanged.
+      await Promise.all(
+        Object.values(this._channels).map((channel) =>
+          this._flushWhisperSegment({ final: true }, channel)
+        )
+      );
     } catch (error) {
       logger.error('Final Whisper transcription failed', { error: error.message });
       this.emit('error', `Whisper transcription failed: ${error.message}`);
@@ -911,26 +513,6 @@ class SpeechService extends EventEmitter {
       this.segmentTimer = null;
     }
 
-    if (this.recognizer) {
-      try {
-        this.recognizer.close();
-      } catch (error) {
-        logger.error('Error closing recognizer', { error: error.message });
-      }
-      this.recognizer = null;
-    }
-
-    if (this.audioConfig) {
-      try {
-        if (typeof this.audioConfig.close === 'function') {
-          this.audioConfig.close();
-        }
-      } catch (error) {
-        logger.error('Error closing audio config', { error: error.message });
-      }
-      this.audioConfig = null;
-    }
-
     if (this.recording) {
       try {
         this.recording.stop();
@@ -940,125 +522,57 @@ class SpeechService extends EventEmitter {
       this.recording = null;
     }
 
-    if (this.pushStream) {
-      try {
-        if (typeof this.pushStream.close === 'function') {
-          this.pushStream.close();
-        }
-      } catch (error) {
-        logger.error('Error closing push stream', { error: error.message });
-      }
-      this.pushStream = null;
-    }
-
-    this.segmentBuffers = [];
-    this.segmentBytes = 0;
-    this.transcriptionInFlight = false;
-    this.pendingFlush = false;
-    this.pendingFinal = false;
+    this._resetChannelBuffers();
     this._resetVadState();
     this._audioDataLogged = false;
     this.useRendererCapture = false;
   }
 
-  async recognizeFromFile(audioFilePath) {
-    if (this.provider === 'azure') {
-      if (!this.speechConfig) {
-        throw new Error('Speech service not initialized');
-      }
-
-      if (!fs.existsSync(audioFilePath)) {
-        throw new Error(`Audio file not found: ${audioFilePath}`);
-      }
-
-      const audioConfig = sdk.AudioConfig.fromWavFileInput(audioFilePath);
-      const recognizer = new sdk.SpeechRecognizer(this.speechConfig, audioConfig);
-
-      return await new Promise((resolve, reject) => {
-        recognizer.recognizeOnceAsync(
-          (result) => {
-            resolve(result.reason === sdk.ResultReason.RecognizedSpeech ? result.text : '');
-            recognizer.close();
-            audioConfig.close();
-          },
-          (error) => {
-            reject(new Error(`File recognition error: ${error}`));
-            recognizer.close();
-            audioConfig.close();
-          }
-        );
-      });
-    }
-
-    if (this.provider === 'whisper') {
-      return this._transcribeWhisperFile(audioFilePath);
-    }
-
-    throw new Error('Speech service not initialized');
-  }
-
   async testConnection() {
-    if (this.provider === 'azure') {
-      if (!this.speechConfig) {
-        throw new Error('Speech service not initialized');
-      }
-
-      try {
-        const audioConfig = sdk.AudioConfig.fromDefaultMicrophoneInput();
-        const recognizer = new sdk.SpeechRecognizer(this.speechConfig, audioConfig);
-        recognizer.close();
-        audioConfig.close();
-        return { success: true, message: 'Azure connection test successful' };
-      } catch (error) {
-        return { success: false, message: error.message };
-      }
+    const mgr = this.whisperServerManager;
+    if (!mgr) {
+      return { success: false, message: 'Resident voice engine not initialized' };
     }
-
-    if (this.provider === 'whisper') {
-      if (!this.whisperCommand) {
-        return { success: false, message: 'Local Whisper CLI not found' };
+    try {
+      // Level-4 responding probe (the only async health level): confirms the
+      // resident server actually answers, not just that its port is open.
+      const st = await mgr.getStatus({ probeResponding: true });
+      if (!st.binaryPresent) {
+        return { success: false, message: 'Voice engine binary not found — build the whisper-server first' };
       }
-      // Actually probe the executable to confirm it works
-      const probe = spawnSync(
-        this.whisperCommand.command,
-        [...this.whisperCommand.baseArgs, '--help'],
-        { encoding: 'utf8', timeout: 10000 }
-      );
-      if (probe.error || probe.status !== 0) {
-        const err = probe.error ? probe.error.message : `exit code ${probe.status}`;
-        return {
-          success: false,
-          message: `Local Whisper CLI detected but probe failed: ${err}`
-        };
+      if (!st.modelPresent) {
+        return { success: false, message: 'Voice model not downloaded yet' };
       }
-      return {
-        success: true,
-        message: `Local Whisper CLI works: ${this.whisperCommand.command}`
-      };
+      if (!st.serverUp) {
+        return { success: false, message: 'Voice engine is not running' };
+      }
+      if (!st.responding) {
+        return { success: false, message: 'Voice engine is running but not responding' };
+      }
+      return { success: true, message: 'Local voice engine is responding' };
+    } catch (error) {
+      return { success: false, message: error.message };
     }
-
-    return { success: false, message: 'Speech service not initialized' };
   }
 
   getStatus() {
+    const whisperHealth = this._whisperResidentHealth();
     return {
       provider: this.provider,
       isRecording: this.isRecording,
-      isInitialized: this.provider === 'azure' ? !!this.speechConfig : !!this.whisperCommand,
+      isInitialized: !!this.whisperServerManager,
       sessionDuration: this.sessionStartTime ? Date.now() - this.sessionStartTime : 0,
       retryCount: this.retryCount,
+      // Three-level resident-engine health (binary / model / server up) so the
+      // overlay + settings can surface three distinct voice messages (Pitfall 4).
+      whisperHealth,
       effectiveSettings: {
         speechProvider: this.provider,
-        azureKey: this._getSetting('azureKey') || '',
-        azureRegion: this._getSetting('azureRegion') || process.env.AZURE_SPEECH_REGION || '',
-        whisperCommand: this._getSetting('whisperCommand') || process.env.WHISPER_COMMAND || '',
-        whisperModelDir: this._getWhisperModelDir(),
         whisperModel: this._getWhisperModel(),
         whisperLanguage: this._getWhisperLanguage(),
         whisperSegmentMs: String(this._getWhisperSegmentMs())
       },
       config: {
-        azure: config.get('speech.azure') || {},
         whisper: config.get('speech.whisper') || {},
         selectedProvider: this.provider
       }
@@ -1066,19 +580,16 @@ class SpeechService extends EventEmitter {
   }
 
   isAvailable() {
-    if (this.provider === 'azure') {
-      return !!this.speechConfig && !!this.available;
-    }
-
-    if (this.provider === 'whisper') {
-      return !!this.whisperCommand && !!this.available;
-    }
-
-    return false;
+    // The resident engine is usable only when its server is up AND the model is
+    // on disk. Recomputed each call so a mid-session engine-down flips
+    // availability off → the overlay shows "voice unavailable" + retry. Typing +
+    // screenshot are unaffected.
+    const health = this._whisperResidentHealth();
+    return !!(health.serverUp && health.modelPresent);
   }
 
   updateSettings(settings = {}) {
-    const speechKeys = ['speechProvider', 'azureKey', 'azureRegion', 'whisperCommand', 'whisperModelDir', 'whisperModel', 'whisperLanguage', 'whisperSegmentMs'];
+    const speechKeys = ['whisperModel', 'whisperLanguage', 'whisperSegmentMs'];
     let changed = false;
 
     for (const key of speechKeys) {
@@ -1095,50 +606,9 @@ class SpeechService extends EventEmitter {
     return this.getStatus();
   }
 
-  _getConfiguredProvider() {
-    const provider = String(this._getSetting('speechProvider') || process.env.SPEECH_PROVIDER || '').trim().toLowerCase();
-
-    if (provider === 'azure' || provider === 'whisper') {
-      return provider;
-    }
-
-    const hasAzure = !!((this._getSetting('azureKey') || process.env.AZURE_SPEECH_KEY) &&
-      (this._getSetting('azureRegion') || process.env.AZURE_SPEECH_REGION));
-
-    if (hasAzure) {
-      return 'azure';
-    }
-
-    return 'whisper';
-  }
-
   _getWhisperModel() {
-    return this._getSetting('whisperModel') || process.env.WHISPER_MODEL || config.get('speech.whisper.model') || 'turbo';
-  }
-
-  _getWhisperModelDir() {
-    const configured = this._getSetting('whisperModelDir') || process.env.WHISPER_MODEL_DIR || '';
-    // Honor an absolute configured dir. Empty or relative values (the old
-    // `.whisper-models` default resolved against an unstable cwd) are replaced
-    // with the stable userData location the installer downloads weights into,
-    // so --model_dir and download_root always agree.
-    if (configured && path.isAbsolute(configured)) {
-      return configured;
-    }
-    return this._getUserDataModelDir() || configured;
-  }
-
-  /**
-   * Absolute model-weights dir under Electron userData — matches
-   * WhisperInstaller.modelDir so transcription finds downloaded models.
-   */
-  _getUserDataModelDir() {
-    try {
-      const { app } = require('electron');
-      return path.join(app.getPath('userData'), '.whisper-models');
-    } catch (_) {
-      return '';
-    }
+    // Default collapsed to the resident engine's ggml model (was Python 'turbo').
+    return this._getSetting('whisperModel') || process.env.WHISPER_MODEL || config.get('speech.whisper.model') || 'small.en';
   }
 
   _getWhisperLanguage() {
@@ -1190,260 +660,6 @@ class SpeechService extends EventEmitter {
   _getSetting(key) {
     const value = this.runtimeSettings[key];
     return value === '' ? null : value;
-  }
-
-  /**
-   * Build a whisper candidate pointing at the app-local venv inside
-   * Electron's userData directory. This is where the onboarding installer
-   * creates the venv in packaged builds.
-   */
-  _getUserDataWhisperCandidate() {
-    try {
-      const { app } = require('electron');
-      const userData = app.getPath('userData');
-      const binDir = process.platform === 'win32' ? 'Scripts' : 'bin';
-      const ext = process.platform === 'win32' ? '.exe' : '';
-      const python = path.join(userData, '.venv-whisper', binDir, `python${ext}`);
-      if (fs.existsSync(python)) {
-        return { command: python, baseArgs: ['-m', 'whisper'] };
-      }
-    } catch (_) {
-      // electron may not be available in unit tests
-    }
-    return null;
-  }
-
-  _resolveWhisperCommand() {
-    const configured = this._getSetting('whisperCommand') || process.env.WHISPER_COMMAND;
-    const candidates = [];
-
-    if (configured) {
-      candidates.push(...this._expandConfiguredWhisperCandidates(configured));
-    }
-
-    // Persistent app venv (highest priority after explicit config)
-    const userDataVenv = this._getUserDataWhisperCandidate();
-    if (userDataVenv) {
-      candidates.push({ ...userDataVenv, source: 'app userData venv' });
-    }
-
-    // Platform-aware fallback candidates (higher priority = tried first)
-    candidates.push({ command: 'whisper', baseArgs: [], source: 'system PATH' });
-    if (process.platform === 'win32') {
-      candidates.push({ command: 'whisper.exe', baseArgs: [], source: 'system PATH (exe)' });
-      candidates.push({ command: 'py', baseArgs: ['-3', '-m', 'whisper'], source: 'py launcher' });
-    }
-    candidates.push({ command: 'python3', baseArgs: ['-m', 'whisper'], source: 'python3 module' });
-    candidates.push({ command: 'python', baseArgs: ['-m', 'whisper'], source: 'python module' });
-
-    for (const candidate of candidates) {
-      if (!candidate || !candidate.command) {
-        continue;
-      }
-
-      const resolved = this._probeWhisperCandidate(candidate);
-      if (resolved) {
-        logger.info('Whisper command resolved', {
-          command: resolved.command,
-          baseArgs: resolved.baseArgs,
-          source: resolved.source || candidate.source || 'unknown'
-        });
-        return resolved;
-      }
-    }
-
-    logger.warn('No Whisper CLI candidate succeeded after probing all fallbacks');
-    return null;
-  }
-
-  /**
-   * Fast, torch-free check for python `-m whisper` candidates. Importing the
-   * whisper package pulls in torch/numba and can take well over 8 s on a cold
-   * cache (first run after install), which made `--help` time out and the mic
-   * button stay hidden until a second launch. `importlib.util.find_spec`
-   * confirms the module is installed without importing it, returning in well
-   * under a second. Returns the candidate on success, else null.
-   */
-  _probeWhisperModuleFast(candidate) {
-    const mIdx = candidate.baseArgs.indexOf('-m');
-    if (mIdx === -1 || candidate.baseArgs[mIdx + 1] !== 'whisper') {
-      return null; // not a `-m whisper` form (e.g. a whisper binary)
-    }
-    const pyArgs = candidate.baseArgs.slice(0, mIdx);
-    const script = 'import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("whisper") else 1)';
-    try {
-      // No shell: an absolute .exe runs directly. shell:true on Windows does
-      // NOT quote args, so a spaced path like
-      //   C:\Users\CANDAN SINGH\...\python.exe
-      // would be split at the space and the probe would wrongly fail —
-      // hiding the mic for any user whose profile name contains a space.
-      const probe = spawnSync(candidate.command, [...pyArgs, '-c', script], {
-        encoding: 'utf8',
-        timeout: 8000,
-        windowsHide: true,
-      });
-      if (!probe.error && probe.status === 0) {
-        return candidate;
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
-  /**
-   * Probe a single candidate: exists check → fast module check → spawn --help.
-   * Returns the working candidate object, or null on failure.
-   */
-  _probeWhisperCandidate(candidate) {
-    const cmd = candidate.command;
-    const args = [...candidate.baseArgs, '--help'];
-
-    // Fast path: skip spawnSync if the file clearly doesn't exist
-    if (path.isAbsolute(cmd) || cmd.includes(path.sep) || cmd.includes('/')) {
-      try {
-        const normalized = path.normalize(cmd);
-        if (!fs.existsSync(normalized)) {
-          logger.debug('Whisper probe skipped: file does not exist', {
-            command: cmd,
-            normalized
-          });
-          return null;
-        }
-      } catch (e) {
-        // fs.existsSync can throw on invalid paths; treat as missing
-        return null;
-      }
-    }
-
-    // Cheap torch-free check first so the mic appears on the first run.
-    const fast = this._probeWhisperModuleFast(candidate);
-    if (fast) {
-      logger.debug('Whisper module confirmed via find_spec', { command: cmd });
-      return fast;
-    }
-
-    let probe;
-    try {
-      probe = spawnSync(cmd, args, {
-        encoding: 'utf8',
-        // First `import whisper` (torch/numba) can be slow on a cold cache.
-        timeout: 30000,
-        windowsHide: true,
-        // No shell — see _probeWhisperModuleFast: shell:true on Windows splits
-        // spaced paths (e.g. "C:\Users\CANDAN SINGH\...") and breaks the probe.
-      });
-    } catch (spawnErr) {
-      logger.debug('Whisper probe spawn error', {
-        command: cmd,
-        error: spawnErr.message
-      });
-      return null;
-    }
-
-    const output = `${probe.stdout || ''}\n${probe.stderr || ''}`;
-    const noModule = output.includes('No module named whisper');
-    const isHelpOutput = output.includes('usage:') || output.includes('whisper') || output.includes('options');
-
-    if (!probe.error && probe.status === 0 && !noModule) {
-      return candidate;
-    }
-
-    // Some whisper builds exit with non-zero on --help but still print usage
-    if (!probe.error && !noModule && isHelpOutput) {
-      logger.debug('Whisper probe accepted non-zero help output', {
-        command: cmd,
-        status: probe.status
-      });
-      return candidate;
-    }
-
-    logger.debug('Whisper probe failed', {
-      command: cmd,
-      status: probe.status,
-      error: probe.error ? probe.error.message : null,
-      noModule,
-      isHelpOutput,
-      outputPreview: output.substring(0, 200)
-    });
-    return null;
-  }
-
-  _expandConfiguredWhisperCandidates(rawCommand) {
-    const parsed = this._parseCommand(rawCommand);
-    if (!parsed) {
-      return [];
-    }
-
-    const candidates = [];
-    // Normalize forward slashes to platform separator before trying anything
-    const normalizedCmd = path.normalize(parsed.command);
-
-    candidates.push({
-      command: normalizedCmd,
-      baseArgs: parsed.baseArgs,
-      source: 'configured (normalized)'
-    });
-
-    const resolvedPath = path.resolve(normalizedCmd);
-    if (resolvedPath !== normalizedCmd) {
-      candidates.push({
-        command: resolvedPath,
-        baseArgs: parsed.baseArgs,
-        source: 'configured (resolved)'
-      });
-    }
-
-    if (process.platform === 'win32') {
-      const base = normalizedCmd;
-      // Try .exe / .cmd / .bat variants when extension is missing
-      if (!/\.(exe|cmd|bat)$/i.test(base)) {
-        candidates.push({ command: `${base}.exe`, baseArgs: parsed.baseArgs, source: 'configured (.exe)' });
-        candidates.push({ command: `${base}.cmd`, baseArgs: parsed.baseArgs, source: 'configured (.cmd)' });
-        if (resolvedPath !== base) {
-          candidates.push({ command: `${resolvedPath}.exe`, baseArgs: parsed.baseArgs, source: 'configured (resolved .exe)' });
-        }
-      }
-      // Some Windows venvs create whisper-script.py alongside whisper.exe
-      const scriptPath = base + '-script.py';
-      candidates.push({ command: 'python', baseArgs: [scriptPath, ...parsed.baseArgs], source: 'configured (script.py)' });
-      // Try using the venv's own python with -m whisper
-      const venvPython = path.join(path.dirname(base), 'python.exe');
-      if (fs.existsSync(venvPython)) {
-        candidates.push({ command: venvPython, baseArgs: ['-m', 'whisper', ...parsed.baseArgs], source: 'configured (venv python -m whisper)' });
-      }
-    } else {
-      // On Unix, try the directory's python3 with -m whisper if the configured path looks like a venv entry point
-      const venvPython3 = path.join(path.dirname(normalizedCmd), 'python3');
-      if (fs.existsSync(venvPython3)) {
-        candidates.push({ command: venvPython3, baseArgs: ['-m', 'whisper', ...parsed.baseArgs], source: 'configured (venv python3 -m whisper)' });
-      }
-      const venvPython = path.join(path.dirname(normalizedCmd), 'python');
-      if (fs.existsSync(venvPython)) {
-        candidates.push({ command: venvPython, baseArgs: ['-m', 'whisper', ...parsed.baseArgs], source: 'configured (venv python -m whisper)' });
-      }
-    }
-
-    return candidates;
-  }
-
-  _parseCommand(rawCommand) {
-    // Respect double-quoted segments so Windows userData paths like
-    // "C:\Users\CANDAN SINGH\...\python.exe" survive intact.
-    const trimmed = String(rawCommand || '').trim();
-    if (!trimmed) {
-      return null;
-    }
-    const parts = trimmed.match(/(?:[^\s"]+|"[^"]*")+/g) || [trimmed];
-    const normalized = parts.map((p) => p.replace(/^"|"$/g, '')).filter(Boolean);
-    if (normalized.length === 0) {
-      return null;
-    }
-
-    return {
-      command: normalized[0],
-      baseArgs: normalized.slice(1)
-    };
   }
 
   _startMicrophoneCapture() {
@@ -1575,61 +791,70 @@ class SpeechService extends EventEmitter {
     if (!chunk || !chunk.length || !this.isRecording) {
       return;
     }
-
-    if (this.provider === 'azure' && this.pushStream) {
-      try {
-        this.pushStream.write(chunk);
-      } catch (error) {
-        logger.error('Error writing audio data to Azure push stream', { error: error.message });
-      }
-      return;
-    }
-
-    if (this.provider === 'whisper') {
-      this._ingestWhisperAudio(Buffer.from(chunk));
-    }
+    this._ingestWhisperAudio(Buffer.from(chunk), this._channels.mic);
   }
 
-  async _flushWhisperSegment({ final }) {
-    if (this.transcriptionInFlight) {
+  async _flushWhisperSegment({ final }, channel = this._channels.mic) {
+    if (channel.inFlight) {
       // A flush was requested while a transcription is still running. Record
       // that we owe a follow-up flush for ANY request (not just a final one),
       // otherwise an utterance that ended mid-transcription stays stranded in
       // the buffer until the next utterance ends or the session stops. Track
-      // final-ness separately so a queued stop still finalises correctly.
-      this.pendingFlush = true;
+      // final-ness separately so a queued stop still finalises correctly. This
+      // serialization is PER CHANNEL: a mic flush in-flight never strands a
+      // system utterance and vice-versa.
+      channel.pendingFlush = true;
       if (final) {
-        this.pendingFinal = true;
+        channel.pendingFinal = true;
       }
       return;
     }
 
-    if (!this.segmentBytes) {
+    if (!channel.bytes) {
       return;
     }
 
-    const audioBuffer = Buffer.concat(this.segmentBuffers, this.segmentBytes);
-    this.segmentBuffers = [];
-    this.segmentBytes = 0;
+    const audioBuffer = Buffer.concat(channel.buffers, channel.bytes);
+    channel.buffers = [];
+    channel.bytes = 0;
 
-    this.transcriptionInFlight = true;
+    channel.inFlight = true;
 
     try {
-      const transcript = await this._transcribeWhisperBuffer(audioBuffer);
+      // STT-01/SC1: transcribe against the RESIDENT whisper-server — no
+      // per-utterance process/model spawn, no cold-start. Build the 16 kHz mono
+      // WAV and POST it through the injected manager (/inference verbose_json,
+      // which drops no_speech_prob > 0.6 segments — the SECOND of the three
+      // gates). Engine-down degrades to '' (no crash); there is NO Python
+      // fallback (that path is deleted).
+      let transcript = '';
+      const mgr = this.whisperServerManager;
+      if (mgr && typeof mgr.transcribe === 'function') {
+        const wav = this._createWavBuffer(audioBuffer);
+        const result = await mgr.transcribe(wav, { language: this._getWhisperLanguage() });
+        transcript = result && typeof result.text === 'string' ? result.text : '';
+      } else {
+        logger.warn('Resident Whisper engine unavailable; dropping segment (no fallback)');
+      }
       const clean = transcript ? transcript.trim() : '';
+      // THIRD gate: the phrase-list hallucination filter still guards
+      // emit('transcription') (VAD segmenter → no_speech_prob>0.6 → this).
+      // Tag every transcript with its channel so the sink can thread
+      // source:'mic'|'system' end-to-end (Phase 6 consumes the tag; Phase 4
+      // only preserves it).
       if (clean && !this._isHallucinatedTranscript(clean)) {
-        this.emit('transcription', clean);
+        this.emit('transcription', { text: clean, source: channel.source });
       } else if (clean) {
-        logger.debug('Dropped likely Whisper silence hallucination', { transcript: clean });
+        logger.debug('Dropped likely Whisper silence hallucination', { transcript: clean, source: channel.source });
       }
     } finally {
-      this.transcriptionInFlight = false;
+      channel.inFlight = false;
 
-      if (this.pendingFlush) {
-        this.pendingFlush = false;
-        const runFinal = this.pendingFinal;
-        this.pendingFinal = false;
-        await this._flushWhisperSegment({ final: runFinal });
+      if (channel.pendingFlush) {
+        channel.pendingFlush = false;
+        const runFinal = channel.pendingFinal;
+        channel.pendingFinal = false;
+        await this._flushWhisperSegment({ final: runFinal }, channel);
       }
     }
   }
@@ -1664,76 +889,6 @@ class SpeechService extends EventEmitter {
     return HALLUCINATIONS.has(normalized);
   }
 
-  async _transcribeWhisperBuffer(audioBuffer) {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencluely-whisper-'));
-    const audioFilePath = path.join(tempDir, 'segment.wav');
-
-    try {
-      fs.writeFileSync(audioFilePath, this._createWavBuffer(audioBuffer));
-      return await this._transcribeWhisperFile(audioFilePath);
-    } finally {
-      this._removeTempDir(tempDir);
-    }
-  }
-
-  async _transcribeWhisperFile(audioFilePath) {
-    if (!this.whisperCommand) {
-      throw new Error('Local Whisper CLI not configured');
-    }
-
-    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencluely-whisper-out-'));
-    const args = [
-      ...this.whisperCommand.baseArgs,
-      audioFilePath,
-      '--model', this._getWhisperModel(),
-      '--language', this._getWhisperLanguage(),
-      '--task', 'transcribe',
-      '--output_format', 'txt',
-      '--output_dir', outputDir,
-      '--verbose', 'False',
-      '--fp16', 'False'
-    ];
-
-    if (this._getWhisperModelDir()) {
-      args.push('--model_dir', this._getWhisperModelDir());
-    }
-
-    try {
-      await new Promise((resolve, reject) => {
-        const child = spawn(this.whisperCommand.command, args, {
-          stdio: ['ignore', 'pipe', 'pipe']
-        });
-
-        let stderr = '';
-        child.stderr.on('data', (chunk) => {
-          stderr += chunk.toString();
-        });
-
-        child.on('error', (error) => {
-          reject(error);
-        });
-
-        child.on('close', (code) => {
-          if (code === 0) {
-            resolve();
-            return;
-          }
-
-          reject(new Error(stderr.trim() || `Whisper exited with code ${code}`));
-        });
-      });
-
-      const transcriptPath = path.join(outputDir, `${path.parse(audioFilePath).name}.txt`);
-      if (!fs.existsSync(transcriptPath)) {
-        return '';
-      }
-
-      return fs.readFileSync(transcriptPath, 'utf8').trim();
-    } finally {
-      this._removeTempDir(outputDir);
-    }
-  }
-
   _createWavBuffer(rawPcmBuffer) {
     const header = Buffer.alloc(44);
     const sampleRate = 16000;
@@ -1757,17 +912,6 @@ class SpeechService extends EventEmitter {
     header.writeUInt32LE(rawPcmBuffer.length, 40);
 
     return Buffer.concat([header, rawPcmBuffer]);
-  }
-
-  _removeTempDir(tempDir) {
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch (error) {
-      logger.error('Failed to remove Whisper temp directory', {
-        tempDir,
-        error: error.message
-      });
-    }
   }
 }
 

@@ -6,13 +6,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Get DOM elements
     const closeButton = document.getElementById('closeButton');
     const quitButton = document.getElementById('quitButton');
-    const speechProviderSelect = document.getElementById('speechProvider');
-    const azureKeyInput = document.getElementById('azureKey');
-    const azureRegionInput = document.getElementById('azureRegion');
-    const whisperCommandInput = document.getElementById('whisperCommand');
-    const whisperModelInput = document.getElementById('whisperModel');
-    const whisperLanguageInput = document.getElementById('whisperLanguage');
-    const whisperSegmentMsInput = document.getElementById('whisperSegmentMs');
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
     const activeSkillSelect = document.getElementById('activeSkill');
@@ -28,6 +21,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const modelStatus = document.getElementById('modelStatus');
     const repairModelBtn = document.getElementById('repairModelBtn');
     const modelStatusLog = document.getElementById('modelStatusLog');
+
+    // Resident whisper.cpp voice engine (STT) status / model / repair (04-07).
+    const whisperStatus = document.getElementById('whisperStatus');
+    const whisperRepairBtn = document.getElementById('whisperRepairBtn');
+    const whisperStatusLog = document.getElementById('whisperStatusLog');
 
     // Curated list arrives from getSettings(); this fallback lets us classify a
     // saved model as curated-vs-advanced even before settings load.
@@ -86,16 +84,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Function to load settings into UI
     const loadSettingsIntoUI = (settings) => {
-        if (settings.speechProvider && speechProviderSelect) speechProviderSelect.value = settings.speechProvider;
-        // Always set the input value, even if empty, so the user sees what's
-        // currently configured (including env-derived defaults). Previously
-        // empty strings were skipped which left stale UI values.
-        if (azureKeyInput) azureKeyInput.value = settings.azureKey || '';
-        if (azureRegionInput) azureRegionInput.value = settings.azureRegion || '';
-        if (whisperCommandInput) whisperCommandInput.value = settings.whisperCommand || '';
-        if (whisperModelInput) whisperModelInput.value = settings.whisperModel || '';
-        if (whisperLanguageInput) whisperLanguageInput.value = settings.whisperLanguage || '';
-        if (whisperSegmentMsInput) whisperSegmentMsInput.value = settings.whisperSegmentMs || '';
         if (windowGapInput) windowGapInput.value = settings.windowGap || '';
 
         // Set C++ as default if no coding language is specified
@@ -139,8 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         updateLocalModelFieldStates();
         refreshModelStatus();
-
-        updateSpeechFieldStates();
+        refreshWhisperStatus();
     };
 
     // Load settings when window opens
@@ -166,13 +153,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Save settings helper function
     const saveSettings = () => {
         const settings = {};
-        if (speechProviderSelect) settings.speechProvider = speechProviderSelect.value;
-        if (azureKeyInput) settings.azureKey = azureKeyInput.value;
-        if (azureRegionInput) settings.azureRegion = azureRegionInput.value;
-        if (whisperCommandInput) settings.whisperCommand = whisperCommandInput.value;
-        if (whisperModelInput) settings.whisperModel = whisperModelInput.value;
-        if (whisperLanguageInput) settings.whisperLanguage = whisperLanguageInput.value;
-        if (whisperSegmentMsInput) settings.whisperSegmentMs = whisperSegmentMsInput.value;
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
@@ -186,35 +166,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         window.api.send('save-settings', settings);
-    };
-
-    const updateSpeechFieldStates = () => {
-        const provider = speechProviderSelect ? speechProviderSelect.value : 'azure';
-
-        // Show/hide provider-specific field groups instead of just disabling
-        // them. This keeps the settings UI clean — only the relevant fields
-        // for the selected provider are visible.
-        const azureGroup = document.getElementById('azureFields');
-        const whisperGroup = document.getElementById('whisperFields');
-        const azureNote = document.getElementById('azureFieldsNote');
-
-        if (azureGroup) {
-            azureGroup.style.display = provider === 'azure' ? '' : 'none';
-        }
-        if (whisperGroup) {
-            whisperGroup.style.display = provider === 'whisper' ? '' : 'none';
-        }
-        if (azureNote) {
-            azureNote.style.display = provider === 'azure' ? '' : 'none';
-        }
-
-        // Also toggle disabled attribute for any leftover direct field refs
-        [azureKeyInput, azureRegionInput].forEach(input => {
-            if (input) input.disabled = provider !== 'azure';
-        });
-        [whisperCommandInput, whisperModelInput, whisperLanguageInput, whisperSegmentMsInput].forEach(input => {
-            if (input) input.disabled = provider !== 'whisper';
-        });
     };
 
     // ── AI model engine (PROV-06) UI helpers ──
@@ -282,14 +233,49 @@ document.addEventListener('DOMContentLoaded', () => {
         return `${p.status || 'downloading'}${pct}`;
     };
 
+    // ── Resident whisper.cpp voice engine (STT) status / model / repair ──
+    // Mirrors the local-model status panel. getWhisperStatus() returns the
+    // three/four-level health { binaryPresent, modelPresent, serverUp,
+    // responding }; passing probeResponding surfaces the responding level.
+    const renderWhisperStatusLine = (s) => {
+        if (!s || s.error) return `Status unavailable${s && s.error ? ': ' + s.error : ''}`;
+        if (!s.binaryPresent) return 'Voice engine missing — reinstall / rebuild the app';
+        if (!s.modelPresent) return 'Voice model missing — download it';
+        if (!s.serverUp) return 'Engine not responding — repair';
+        return `Engine up · model present${s.responding ? ' · responding' : ''}`;
+    };
+
+    const refreshWhisperStatus = async () => {
+        if (!whisperStatus || !window.electronAPI || !window.electronAPI.getWhisperStatus) return;
+        try {
+            const s = await window.electronAPI.getWhisperStatus({ probeResponding: true });
+            whisperStatus.textContent = renderWhisperStatusLine(s);
+        } catch (e) {
+            whisperStatus.textContent = 'Status unavailable: ' + (e.message || e);
+        }
+    };
+
+    const appendWhisperLog = (line) => {
+        if (!whisperStatusLog) return;
+        whisperStatusLog.textContent += (whisperStatusLog.textContent ? '\n' : '') + line;
+        whisperStatusLog.scrollTop = whisperStatusLog.scrollHeight;
+    };
+
+    // install-progress arrives structured as { percent, downloadedBytes,
+    // totalBytes } (or a legacy string). Render a compact human line.
+    const formatWhisperProgress = (p) => {
+        if (!p) return '';
+        if (typeof p === 'string') return p;
+        const pct = (typeof p.percent === 'number') ? `${p.percent}%` : '';
+        const mb = (n) => (typeof n === 'number' && isFinite(n) ? `${(n / (1024 * 1024)).toFixed(0)} MB` : '');
+        const size = (typeof p.downloadedBytes === 'number' && typeof p.totalBytes === 'number')
+            ? ` (${mb(p.downloadedBytes)} / ${mb(p.totalBytes)})`
+            : '';
+        return `${pct || 'downloading'}${size}`;
+    };
+
     // Add event listeners for all inputs
     const inputs = [
-        azureKeyInput,
-        azureRegionInput,
-        whisperCommandInput,
-        whisperModelInput,
-        whisperLanguageInput,
-        whisperSegmentMsInput,
         windowGapInput
     ];
 
@@ -299,13 +285,6 @@ document.addEventListener('DOMContentLoaded', () => {
             input.addEventListener('blur', saveSettings);
         }
     });
-
-    if (speechProviderSelect) {
-        speechProviderSelect.addEventListener('change', () => {
-            updateSpeechFieldStates();
-            saveSettings();
-        });
-    }
 
     // Language selection handler
     if (codingLanguageSelect) {
@@ -403,7 +382,54 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    updateSpeechFieldStates();
+    // Download the voice model if missing, else recover (restart) the resident
+    // whisper server. Streams install-progress into the log; mirrors repairModelBtn.
+    if (whisperRepairBtn) {
+        whisperRepairBtn.addEventListener('click', async () => {
+            if (!window.electronAPI) return;
+            whisperRepairBtn.disabled = true;
+            let unsubscribe = null;
+            if (window.electronAPI.onInstallProgress) {
+                unsubscribe = window.electronAPI.onInstallProgress((p) => {
+                    appendWhisperLog(formatWhisperProgress(p));
+                });
+            }
+            try {
+                // Decide download-vs-repair from current health (bridge-guarded).
+                let missingModel = false;
+                if (window.electronAPI.getWhisperStatus) {
+                    try {
+                        const s = await window.electronAPI.getWhisperStatus();
+                        missingModel = !!(s && s.binaryPresent && !s.modelPresent);
+                    } catch (_) { /* fall through to repair */ }
+                }
+                if (missingModel && window.electronAPI.downloadWhisperModel) {
+                    appendWhisperLog('Downloading ggml-small.en voice model…');
+                    const r = await window.electronAPI.downloadWhisperModel('small.en');
+                    appendWhisperLog(r && r.ok
+                        ? '\n✓ Voice model ready'
+                        : `\n✗ ${r && r.message ? r.message : 'Download failed'}`);
+                } else if (window.electronAPI.recoverWhisper) {
+                    appendWhisperLog('Repairing voice engine…');
+                    const r = await window.electronAPI.recoverWhisper();
+                    const ok = !!(r && (r.ok || r.serverUp));
+                    appendWhisperLog(ok
+                        ? '\n✓ Voice engine restarted'
+                        : `\n✗ ${(r && (r.message || r.error)) || 'Repair did not complete'}`);
+                } else {
+                    appendWhisperLog('Voice engine controls unavailable.');
+                }
+            } catch (e) {
+                appendWhisperLog(`\n! Error: ${e.message || e}`);
+            } finally {
+                if (typeof unsubscribe === 'function') {
+                    try { unsubscribe(); } catch (_) { /* ignore */ }
+                }
+                whisperRepairBtn.disabled = false;
+                refreshWhisperStatus();
+            }
+        });
+    }
 
     // Initialize icon grid with correct paths
     const initializeIconGrid = () => {
@@ -489,8 +515,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize icon grid
     initializeIconGrid();
 
-    // Light periodic refresh of local model health while settings is open.
+    // Light periodic refresh of local model + voice engine health while open.
     setInterval(refreshModelStatus, 8000);
+    setInterval(refreshWhisperStatus, 8000);
 
     // Request settings on load
     setTimeout(() => {

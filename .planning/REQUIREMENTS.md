@@ -30,11 +30,11 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 ### Speech / STT (STT)
 
-- [ ] **STT-01**: Speech-to-text runs against a resident whisper.cpp engine — each VAD segment transcribes with no per-utterance process spawn / cold-start
-- [ ] **STT-02**: The STT model downloads and caches locally with visible progress on first run
-- [ ] **STT-03**: A continuous "ambient listening" mode keeps the audio stream open from launch to quit, transcribing on VAD-detected natural pauses (reusing the existing VAD + hallucination filter)
-- [ ] **STT-04**: On macOS the app captures system (loopback) audio via ScreenCaptureKit as a separate channel from the mic, so a question asked by the other party is transcribed
-- [ ] **STT-05**: The Azure Speech SDK and its ~380-line browser-DOM polyfill are fully removed (deferred from Phase 3 — Azure is STT-only; kept through Phase 3 so voice keeps working, deleted alongside the resident-STT replacement)
+- [x] **STT-01**: Speech-to-text runs against a resident whisper.cpp engine — each VAD segment transcribes with no per-utterance process spawn / cold-start
+- [x] **STT-02**: The STT model downloads and caches locally with visible progress on first run
+- [x] **STT-03**: A continuous "ambient listening" mode keeps the audio stream open from launch to quit, transcribing on VAD-detected natural pauses (reusing the existing VAD + hallucination filter)
+- [x] **STT-04**: On macOS the app captures system (loopback) audio via a Core Audio Process Tap (macOS 14.4+; mic-only below the floor) as a separate channel from the mic, so a question asked by the other party is transcribed
+- [x] **STT-05**: The Azure Speech SDK and its ~380-line browser-DOM polyfill are fully removed (deferred from Phase 3 — Azure is STT-only; kept through Phase 3 so voice keeps working, deleted alongside the resident-STT replacement)
 
 ### Continuous Mode (CONT)
 
@@ -131,11 +131,11 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | PROV-09 | Phase 7 | Pending |
 | PROV-10 | Phase 7 | Pending |
 | PROV-11 | Phase 7 | Pending |
-| STT-01 | Phase 4 | Pending |
-| STT-02 | Phase 4 | Pending |
-| STT-03 | Phase 4 | Pending |
-| STT-04 | Phase 4 | Pending |
-| STT-05 | Phase 4 (Azure removal, from PROV-07) | Pending |
+| STT-01 | Phase 4 | Complete |
+| STT-02 | Phase 4 | Complete |
+| STT-03 | Phase 4 | Complete |
+| STT-04 | Phase 4 | Complete |
+| STT-05 | Phase 4 (Azure removal, from PROV-07) | Complete |
 | CONT-01 | Phase 6 | Pending |
 | CONT-02 | Phase 6 | Pending |
 | CONT-03 | Phase 6 | Pending |
@@ -163,4 +163,4 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 
 ---
 *Requirements defined: 2026-07-13*
-*Last updated: 2026-07-14 — split PROV-07: Gemini removal stays Phase 3; Azure removal → new STT-05/Phase 4 (Azure is STT-only, kept so voice works)*
+*Last updated: 2026-07-16 — Phase 4 complete & verified (04-VERIFICATION.md passed 6/6): STT-01…05 done; SC4 live system-audio capture + attended real-world validation deferred to Phase 8 by human decision (implementation + degrade paths verified in code)*

@@ -22,6 +22,8 @@ class MainWindowUI {
         this._mediaStream = null;
         this._scriptNode = null;
         this._captureInterval = null;
+        // Debounce for mic-device-change (AirPods in/out) re-acquire.
+        this._deviceChangeTimer = null;
         
         // Define available skills for navigation
         this.availableSkills = [
@@ -432,6 +434,18 @@ class MainWindowUI {
             window.electronAPI.onRecordingStopped(() => {
                 this.handleRecordingStopped();
             });
+
+            // Mic-device-change resilience (AirPods in/out, USB headset swap):
+            // while ambient/recording is active, tear down + re-acquire the
+            // getUserMedia stream so listening survives the swap. Debounced
+            // (devicechange often fires several times per swap) and wrapped so a
+            // transient device error never crashes the renderer.
+            if (typeof navigator !== 'undefined' && navigator.mediaDevices &&
+                typeof navigator.mediaDevices.addEventListener === 'function') {
+                navigator.mediaDevices.addEventListener('devicechange', () => {
+                    this._handleAudioDeviceChange();
+                });
+            }
 
             window.electronAPI.onSkillChanged((event, data) => {
                 if (data && data.skill) {
@@ -1023,11 +1037,66 @@ class MainWindowUI {
                 clearInterval(this._captureInterval);
                 this._captureInterval = null;
             }
+            // Cancel any pending device-change re-acquire — we're no longer
+            // capturing, so a queued re-acquire would be stale.
+            if (this._deviceChangeTimer) {
+                clearTimeout(this._deviceChangeTimer);
+                this._deviceChangeTimer = null;
+            }
         } catch (error) {
             logger.error('Error stopping renderer audio capture', {
                 component: 'MainWindowUI',
                 error: error.message
             });
+        }
+    }
+
+    /**
+     * Debounced entry point for a mic-device change. devicechange fires several
+     * times per physical swap (remove + add), so collapse a burst into a single
+     * re-acquire. Only matters while we're actively capturing in the renderer.
+     */
+    _handleAudioDeviceChange() {
+        if (!this.isRecording) {
+            return;
+        }
+        if (this._deviceChangeTimer) {
+            clearTimeout(this._deviceChangeTimer);
+        }
+        this._deviceChangeTimer = setTimeout(() => {
+            this._deviceChangeTimer = null;
+            this._reacquireMicAfterDeviceChange();
+        }, 500);
+    }
+
+    /**
+     * Re-acquire the microphone after a device change without crashing. Resets
+     * the main-process mic VAD channel first (drops the truncated partial from
+     * the old device), then re-runs renderer capture (which tears down + opens a
+     * fresh getUserMedia on the new default device). If capture truly can't
+     * resume, notify main via the existing stop path so recording state stays
+     * consistent.
+     */
+    async _reacquireMicAfterDeviceChange() {
+        if (!this.isRecording) {
+            return;
+        }
+        try {
+            logger.info('Audio device changed — re-acquiring microphone', {
+                component: 'MainWindowUI'
+            });
+            if (window.electronAPI && typeof window.electronAPI.reattachSpeechChannel === 'function') {
+                try { await window.electronAPI.reattachSpeechChannel('mic'); } catch (_) { /* best effort */ }
+            }
+            // _startRendererAudioCapture() calls _stopRendererAudioCapture()
+            // first, so this is a clean teardown + re-acquire.
+            await this._startRendererAudioCapture();
+        } catch (error) {
+            logger.error('Failed to re-acquire microphone after device change', {
+                component: 'MainWindowUI',
+                error: error.message
+            });
+            try { await window.electronAPI.stopSpeechRecognition(); } catch (_) { /* ignore */ }
         }
     }
 

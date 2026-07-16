@@ -7,6 +7,8 @@
     "start": "env -u ELECTRON_RUN_AS_NODE electron .",
     "dev": "env -u ELECTRON_RUN_AS_NODE electron . --no-sandbox --disable-gpu",
     "test-speech": "node scripts/test-speech.js",
+    "compile:whisper-server": "node scripts/build-whisper-server.js",
+    "compile:audio-tap": "node scripts/build-macos-audio-tap.js",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
@@ -34,7 +36,6 @@
     "dotenv": "^16.3.1",
     "markdown": "^0.5.0",
     "marked": "^15.0.12",
-    "microsoft-cognitiveservices-speech-sdk": "^1.40.0",
     "node-record-lpcm16": "^1.0.1",
     "ollama": "^0.6.3",
     "openai": "^6.47.0",
@@ -91,6 +92,7 @@
       "gatekeeperAssess": false,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "OpenCluely uses the microphone to transcribe your speech locally with Whisper.",
+        "NSAudioCaptureUsageDescription": "OpenCluely captures system audio to transcribe the other participant in a call.",
         "NSCameraUsageDescription": "OpenCluely does not record video; this entitlement is only present for media-capture compatibility.",
         "NSScreenCaptureUsageDescription": "OpenCluely captures the screen to read on-screen content for AI assistance."
       }

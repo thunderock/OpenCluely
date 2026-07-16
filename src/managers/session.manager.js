@@ -108,14 +108,19 @@ class SessionManager {
   /**
    * Add user transcription or chat input
    */
-  addUserInput(text, source = 'chat') {
+  addUserInput(text, source = 'chat', extraMetadata = {}) {
     return this.addConversationEvent({
       role: 'user',
       content: text,
       action: source === 'speech' ? 'speech_transcription' : 'chat_input',
       metadata: {
         source,
-        textLength: text.length
+        textLength: text.length,
+        // Optional caller metadata (e.g. the speech channel 'mic'|'system'),
+        // kept SEPARATE from `source` — that field is the input-KIND
+        // (chat|speech|llm_input), NOT the audio channel. Existing callers pass
+        // no third arg, so this is fully back-compatible.
+        ...extraMetadata
       }
     });
   }

@@ -23,6 +23,8 @@ module.exports = [
       'dist/**',
       '.venv-whisper/**',
       '.whisper-models/**',
+      'resources/.whisper-cpp-src/**', // whisper.cpp build cache (cloned upstream source; see scripts/build-whisper-server.js)
+      'resources/bin/**', // compiled whisper-server binary + build artifacts
       'lib/markdown.js', // vendored 1725-line parser (hand-written lib/mathrender.js is linted below)
       'assests/vendor/**', // vendored Font Awesome (intentional misspelling)
       'webapp/**', // standalone marketing site

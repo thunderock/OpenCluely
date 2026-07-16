@@ -1,6 +1,6 @@
 const path = require("path");
 const fs = require("fs");
-const { app, BrowserWindow, globalShortcut, session, ipcMain } = require("electron");
+const { app, BrowserWindow, globalShortcut, session, ipcMain, powerMonitor } = require("electron");
 const { upsertEnvContent } = require("./src/core/env-file");
 
 // ── Resolve a stable .env location ──
@@ -61,12 +61,13 @@ const config = require("./src/core/config");
 const FirstRunManager = require("./src/core/first-run");
 
 // ── Global crash guard ──
-// The speech path spawns external processes (Whisper CLI, and on macOS/Linux
-// the sox/rec/arecord recorders via node-record-lpcm16). A missing recorder
-// binary makes that library emit an 'error' on its child process with no
-// listener, which would otherwise become an uncaughtException and quit the
-// entire app the moment the user clicks the mic. We log and stay alive — the
-// speech service surfaces a friendly status to the UI instead.
+// The speech path spawns external processes on macOS/Linux (the sox/rec/arecord
+// mic recorders via node-record-lpcm16). A missing recorder binary makes that
+// library emit an 'error' on its child process with no listener, which would
+// otherwise become an uncaughtException and quit the entire app the moment the
+// user clicks the mic. We log and stay alive — the speech service surfaces a
+// friendly status to the UI instead. (STT itself is now the resident
+// whisper-server — no per-utterance process spawn.)
 process.on("uncaughtException", (err) => {
   logger.error("Uncaught exception (kept alive)", {
     error: err && err.message,
@@ -89,6 +90,10 @@ const llmService = require("./src/services/llm.service");
 const windowManager = require("./src/managers/window.manager");
 const sessionManager = require("./src/managers/session.manager");
 
+// Sleep/wake re-warm settle delay (openwhispr #766): give the audio/GPU drivers
+// a beat to come back after resume before we re-probe/restart the engine + tap.
+const REWARM_SETTLE_MS = 1500;
+
 class ApplicationController {
   constructor() {
     this.isReady = false;
@@ -97,6 +102,17 @@ class ApplicationController {
   // Default to C++ so language is enforced from first run
   this.codingLanguage = "cpp";
     this.speechAvailable = false;
+
+    // Ambient listening (STT-03/SC3): the audio stream stays open launch→quit.
+    // `_ambientDesired` is the user's LAST on/off intent — the interim mic
+    // control (mic button + Alt+R) flips it, and `_ensureAmbientListening()`
+    // honors it so a deferred first-run start, a speech-'status' event, or a
+    // sleep/wake re-warm never force-starts listening the user had paused.
+    this._ambientDesired = true;
+    // Sleep/wake re-warm re-entrancy guard (openwhispr #766). A burst of resume
+    // events must never re-enter and double-restart the whisper-server / tap.
+    this._rewarmInFlight = false;
+    this._powerMonitorWired = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
     // single spoken question can still arrive as a few fragments (mid-thought
@@ -119,12 +135,17 @@ class ApplicationController {
       envPath: ENV_PATH,
       sentinelPath: path.join(app.getPath("userData"), ".opencluely-firstrun-completed"),
     });
-    // Lazily-initialised in getWhisperInstaller() so tests can mock
-    // the constructor without polluting main-process startup.
-    this._whisperInstaller = null;
+    // Resident STT engine (STT-01) + ggml model downloader (STT-02) — lazily
+    // initialised in getWhisperServerManager()/getWhisperModelDownloader() so
+    // importing or running tests never spawns a whisper-server.
+    this._whisperServerManager = null;
+    this._whisperModelDownloader = null;
     // Local engine lifecycle (PROV-05) — lazily-initialised in
     // getLocalModelManager() so it never runs during import/tests.
     this._localModelManager = null;
+    // macOS system-audio tap (STT-04) — lazily-initialised in
+    // getSystemAudioTapManager() so importing/tests never spawn the helper.
+    this._systemAudioTapManager = null;
     this.isFirstRun = false;
 
     // Window configurations for reference
@@ -246,6 +267,13 @@ class ApplicationController {
       await windowManager.initializeWindows({ showMainWindow: !isFirstRun });
       this.setupGlobalShortcuts();
 
+      // Resilience (STT-03/SC3 "survive a full session"): arm the sleep/wake
+      // re-warm as soon as the app is ready — it lazily resolves the managers
+      // in onWakeFromSleep, so it must NOT wait on the (potentially slow) model
+      // warmup + whisper/tap starts below. openwhispr #766: sleep evicts the
+      // GPU/stream state.
+      this._setupPowerMonitor();
+
       // Initialize default stealth mode with terminal icon
       this.updateAppIcon("terminal");
 
@@ -294,6 +322,100 @@ class ApplicationController {
           error: e.message,
         });
       }
+
+      // Resident STT engine (STT-01/SC1): pre-warm the whisper-server so each
+      // VAD segment transcribes with NO per-utterance spawn/cold-start. Mirrors
+      // the LocalModelManager start above — NON-BLOCKING (the overlay is already
+      // shown) + NON-FATAL (a failure is logged, the app continues; the inline
+      // "voice unavailable" UX surfaces recovery; typing + screenshot keep
+      // working). Unlike the Ollama daemon, whisper-server cannot start without
+      // its model file, so we only pre-warm once the ggml model is on disk — the
+      // first-run download is driven by onboarding/settings (04-07), not here.
+      try {
+        const whisperMgr = this.getWhisperServerManager();
+        if (typeof whisperMgr.modelPresent === "function" && !whisperMgr.modelPresent()) {
+          logger.info(
+            "Voice model not downloaded yet; skipping whisper-server pre-warm (onboarding/settings drives the download)",
+          );
+        } else {
+          const whisperStatus = await whisperMgr.start();
+          logger.info("Whisper server manager started", whisperStatus);
+        }
+      } catch (e) {
+        logger.warn("Whisper server manager start failed (continuing)", {
+          error: e.message,
+        });
+      }
+      // Inject the (possibly-not-yet-ready) resident manager into the speech
+      // service so the flush seam transcribes against it. setWhisperServerManager
+      // re-evaluates availability + emits a status the existing speech-status /
+      // speech-availability broadcast carries to the overlay.
+      try {
+        if (typeof speechService.setWhisperServerManager === "function") {
+          speechService.setWhisperServerManager(this.getWhisperServerManager());
+          this.speechAvailable = speechService.isAvailable
+            ? speechService.isAvailable()
+            : false;
+        }
+      } catch (e) {
+        logger.warn("Failed to inject whisper manager into speech service", {
+          error: e.message,
+        });
+      }
+
+      // macOS system-audio tap (STT-04/SC4): capture the OTHER party's audio as a
+      // separate source:'system' channel. Sits behind isSupported() (darwin &&
+      // >=14.4) -> consent -> degrade-to-mic, so any failure just leaves the
+      // system channel OFF and mic-only ambient listening (the guaranteed
+      // baseline) keeps working. NON-BLOCKING + NON-FATAL, like the whisper/local
+      // starts above. The tap's 16 kHz PCM feeds speechService.handleSystemAudioChunk;
+      // setSystemChannelEnabled gates the second pipeline. NOTE (04-RESEARCH Flag 3):
+      // the NSAudioCaptureUsageDescription TCC prompt does not fire on unsigned
+      // builds — the 04-05 signing spike + Phase 8 signing gate whether this is
+      // actually live in the shipped app.
+      try {
+        const tap = this.getSystemAudioTapManager();
+        if (!tap.isSupported()) {
+          logger.info(
+            "System audio tap not supported on this OS (needs macOS 14.4+) — microphone only",
+          );
+        } else if (typeof speechService.handleSystemAudioChunk !== "function") {
+          logger.info("Speech service has no system-audio channel — microphone only");
+        } else {
+          const tapStatus = await tap.start({
+            onPcm: (buf) => speechService.handleSystemAudioChunk(buf),
+          });
+          const live = !!(tapStatus && tapStatus.running && tapStatus.granted);
+          if (typeof speechService.setSystemChannelEnabled === "function") {
+            speechService.setSystemChannelEnabled(live);
+          }
+          if (live) {
+            logger.info(
+              "System audio tap live — capturing the other party's audio",
+              tapStatus,
+            );
+          } else {
+            logger.info(
+              "System audio unavailable — using microphone only (degrade-to-mic)",
+              tapStatus,
+            );
+          }
+        }
+      } catch (e) {
+        logger.warn("System audio tap start failed (continuing mic-only)", {
+          error: e.message,
+        });
+      }
+
+      // Ambient listening (STT-03/SC3): auto-start from launch so the stream
+      // stays open launch→quit — NON-BLOCKING + guarded. If the engine isn't
+      // ready yet (first-run: the ggml model is still downloading, so
+      // isAvailable() is false), this simply DEFERS — the speech-'status'
+      // handler re-invokes it the moment the engine reports ready. Launch is
+      // never blocked on it, and it is skipped while the onboarding wizard is
+      // up (complete-first-run re-invokes it) so we never grab the mic
+      // mid-setup.
+      this._ensureAmbientListening("launch");
     } catch (error) {
       this.starting = false;
       logger.error("Application initialization failed", {
@@ -369,8 +491,14 @@ class ApplicationController {
       });
     });
 
-    speechService.on("transcription", (text) => {
-      this.handleTranscriptionFragment(text);
+    speechService.on("transcription", (payload) => {
+      // The flush now emits { text, source:'mic'|'system' } (04-04). Stay
+      // tolerant of a bare string (any legacy emit) → treat as mic.
+      if (typeof payload === "string") {
+        this.handleTranscriptionFragment({ text: payload, source: "mic" });
+      } else {
+        this.handleTranscriptionFragment(payload || {});
+      }
     });
 
     speechService.on("interim-transcription", (text) => {
@@ -388,6 +516,12 @@ class ApplicationController {
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("speech-availability", { available: this.speechAvailable });
       });
+      // Deferred ambient auto-listen (STT-03/SC3): when the engine first
+      // reports ready (e.g. a first-run ggml download just finished + the
+      // whisper-server came up), begin ambient listening WITHOUT a manual
+      // trigger. Idempotent + honors the interim pause, so this never
+      // double-starts and never overrides a user who paused.
+      this._ensureAmbientListening("status");
     });
 
     speechService.on("error", (error) => {
@@ -421,13 +555,35 @@ class ApplicationController {
     });
 
     ipcMain.handle("start-speech-recognition", () => {
+      // Interim ON via the mic button: this IS the ambient on/off control this
+      // phase, so record the desired-listening intent for auto-resume.
+      this._ambientDesired = true;
       speechService.startRecording();
       return speechService.getStatus();
     });
 
     ipcMain.handle("stop-speech-recognition", () => {
+      // Interim OFF via the mic button: pause ambient listening (halts mic
+      // capture; the system-tap ingest is gated off by isRecording).
+      this._ambientDesired = false;
       speechService.stopRecording();
       return speechService.getStatus();
+    });
+
+    // Mic-device-change re-attach (AirPods in/out): the renderer signals here
+    // just before it re-acquires getUserMedia so we drop the truncated partial
+    // from the now-dead device + reset that channel's VAD (no stranded
+    // half-word, no double-flush). Degrade-never-crash.
+    ipcMain.handle("speech-reattach-channel", (_event, source) => {
+      try {
+        if (typeof speechService.resetChannelForReattach === "function") {
+          speechService.resetChannelForReattach(source === "system" ? "system" : "mic");
+        }
+        return { ok: true };
+      } catch (e) {
+        logger.warn("speech-reattach-channel failed", { error: e.message });
+        return { ok: false, error: e.message };
+      }
     });
 
     // Raw PCM audio captured by the renderer's Web Audio API (Windows Whisper path)
@@ -439,10 +595,12 @@ class ApplicationController {
 
     // Also handle direct send events for fallback
     ipcMain.on("start-speech-recognition", () => {
+      this._ambientDesired = true;
       speechService.startRecording();
     });
 
     ipcMain.on("stop-speech-recognition", () => {
+      this._ambientDesired = false;
       speechService.stopRecording();
     });
 
@@ -673,6 +831,10 @@ class ApplicationController {
             win.webContents.send("speech-availability", { available: this.speechAvailable });
           }
         });
+        // Onboarding is done + the main overlay is shown: now that we won't
+        // interrupt setup, begin ambient listening if the engine is ready
+        // (STT-03/SC3). Defers silently if the model still isn't downloaded.
+        this._ensureAmbientListening("onboarding-complete");
         return { success: true };
       } catch (e) {
         return { success: false, error: e.message };
@@ -705,49 +867,81 @@ class ApplicationController {
       }
     });
 
-    // Detect an installed Whisper CLI across common locations.
-    ipcMain.handle("detect-whisper", async () => {
-      try {
-        const installer = this.getWhisperInstaller();
-        return await installer.detect();
-      } catch (e) {
-        logger.warn("Whisper detection failed", { error: e.message });
-        return { found: false, command: null, version: null, error: e.message };
-      }
-    });
-
-    // Install Whisper. Streams progress lines back via `webContents.send`
-    // so the renderer can paint them as they arrive.
-    ipcMain.handle("install-whisper", async (event) => {
-      try {
-        const installer = this.getWhisperInstaller();
-        const sender = event.sender;
-        const result = await installer.install({
-          onProgress: (line) => {
-            try { sender.send("install-progress", line); } catch (_) { /* ignore */ }
-          },
-        });
-        return result;
-      } catch (e) {
-        logger.error("Whisper install failed", { error: e.message });
-        return { ok: false, command: null, message: e.message, logs: "" };
-      }
-    });
-
-    // Download Whisper model. Streams progress lines back via `webContents.send`
+    // Download the ggml voice model via the 04-02 downloader (resumable HTTP
+    // Range + SHA256 verify; atomic-rename-after-verify; no Python install
+    // step). Streams STRUCTURED { percent, downloadedBytes, totalBytes } on the same
+    // `install-progress` channel the onboarding/settings UI already listens on.
     ipcMain.handle("download-whisper-model", async (event, modelName) => {
       try {
-        const installer = this.getWhisperInstaller();
         const sender = event.sender;
-        const result = await installer.downloadModel(modelName || 'turbo', {
-          onProgress: (line) => {
-            try { sender.send("install-progress", line); } catch (_) { /* ignore */ }
+        const downloader = this.getWhisperModelDownloader();
+        const model = modelName || config.get("speech.whisper.model") || "small.en";
+        const result = await downloader.download(model, {
+          onProgress: (p) => {
+            try { sender.send("install-progress", p); } catch (_) { /* ignore */ }
           },
         });
+        // If a fresh model just landed, (re)start the server + refresh the speech
+        // service so the mic path becomes available without a relaunch.
+        if (result && result.ok) {
+          try {
+            const mgr = this.getWhisperServerManager();
+            await mgr.start();
+            if (typeof speechService.setWhisperServerManager === "function") {
+              speechService.setWhisperServerManager(mgr);
+            }
+          } catch (_) { /* best effort — inline status surfaces any failure */ }
+        }
         return result;
       } catch (e) {
         logger.error("Whisper model download failed", { error: e.message });
-        return { ok: false, message: e.message, path: null };
+        return { ok: false, reason: "error", message: e.message };
+      }
+    });
+
+    // Resident STT engine health (mirrors get-model-status). Three-level health:
+    // binary present / model present / server up (+ optional async responding).
+    ipcMain.handle("get-whisper-status", async (_event, opts) => {
+      try {
+        return await this.getWhisperServerManager().getStatus(opts);
+      } catch (e) {
+        return { serverUp: false, error: e.message };
+      }
+    });
+
+    // Voice-engine recovery (mirrors recover-model). 'download' → (re)fetch the
+    // ggml model with progress then restart; anything else → (re)start the owned
+    // server. Either way the speech service is refreshed so the mic recovers.
+    ipcMain.handle("whisper-recover", async (event, action) => {
+      try {
+        const mgr = this.getWhisperServerManager();
+        if (action === "download") {
+          const sender = event.sender;
+          const downloader = this.getWhisperModelDownloader();
+          const result = await downloader.download(
+            config.get("speech.whisper.model") || "small.en",
+            {
+              onProgress: (p) => {
+                try { sender.send("install-progress", p); } catch (_) { /* ignore */ }
+              },
+            },
+          );
+          try {
+            await mgr.start();
+            if (typeof speechService.setWhisperServerManager === "function") {
+              speechService.setWhisperServerManager(mgr);
+            }
+          } catch (_) { /* best effort */ }
+          return result;
+        }
+        const status = await mgr.start();
+        if (typeof speechService.setWhisperServerManager === "function") {
+          speechService.setWhisperServerManager(mgr);
+        }
+        return status;
+      } catch (e) {
+        logger.error("Whisper recovery failed", { action, error: e.message });
+        return { ok: false, error: e.message };
       }
     });
 
@@ -938,6 +1132,130 @@ class ApplicationController {
     });
   }
 
+  /**
+   * The single entry point for ambient auto-listen (STT-03/SC3). Starts
+   * listening ONLY when it is the desired state AND the resident engine is
+   * ready — idempotent + NON-BLOCKING. Called at launch, when the engine first
+   * reports ready (deferred first-run case, via the speech-'status' handler),
+   * after onboarding completes, and on wake-from-sleep. It NEVER force-starts a
+   * session the user paused (honors `_ambientDesired`) and NEVER blocks: if the
+   * engine isn't ready it returns immediately and a later 'status' re-invokes.
+   */
+  _ensureAmbientListening(reason = "auto") {
+    try {
+      if (!this._ambientDesired) {
+        return; // user paused via the interim mic control — do not resume
+      }
+      if (this.isFirstRun) {
+        return; // onboarding wizard is up — don't grab the mic mid-setup
+      }
+      const available = speechService.isAvailable
+        ? speechService.isAvailable()
+        : false;
+      if (!available) {
+        return; // engine not ready yet — defer (a 'status' event re-invokes us)
+      }
+      const status = speechService.getStatus ? speechService.getStatus() : {};
+      if (status.isRecording) {
+        return; // already ambient-listening — idempotent
+      }
+      speechService.startRecording(); // ambient listening on (auto, from onAppReady/status)
+      logger.info("Ambient listening started", { reason });
+    } catch (e) {
+      logger.warn("Ambient listening auto-start failed (will retry on next status)", {
+        error: e.message,
+      });
+    }
+  }
+
+  /**
+   * Register the sleep/wake re-warm (openwhispr #766: sleep evicts the local
+   * GPU/stream state — the whisper-server can die and the mic/tap streams go
+   * stale on resume). powerMonitor is only available after app-ready, so this
+   * is called from onAppReady. Guarded so a double-register can't happen, and
+   * wrapped so a missing powerMonitor (non-Electron test import) never crashes.
+   */
+  _setupPowerMonitor() {
+    if (this._powerMonitorWired) {
+      return;
+    }
+    try {
+      if (!powerMonitor || typeof powerMonitor.on !== "function") {
+        return;
+      }
+      powerMonitor.on("resume", () => {
+        this.onWakeFromSleep().catch((e) =>
+          logger.warn("onWakeFromSleep threw (ignored)", { error: e && e.message }),
+        );
+      });
+      this._powerMonitorWired = true;
+      logger.debug("powerMonitor resume handler registered");
+    } catch (e) {
+      logger.warn("Failed to register powerMonitor resume handler", { error: e.message });
+    }
+  }
+
+  /**
+   * Re-warm after the machine wakes (openwhispr #766). Delegates to the pure
+   * src/core/wake-rewarm orchestrator so the guarded sequence (settle → whisper
+   * re-probe/restart → tap reopen → replay ambient) is unit-testable +
+   * degrade-never-crash. Re-entrancy is guarded via `_rewarmInFlight`; an
+   * in-flight transcription is NOT interrupted (the server is only restarted
+   * when actually down).
+   */
+  async onWakeFromSleep() {
+    const { rewarmAfterWake } = require("./src/core/wake-rewarm");
+    const result = await rewarmAfterWake({
+      isInFlight: () => this._rewarmInFlight,
+      setInFlight: (v) => { this._rewarmInFlight = v; },
+      getWhisperManager: () => this.getWhisperServerManager(),
+      getTapManager: () => this.getSystemAudioTapManager(),
+      speechService,
+      onSystemPcm: (buf) => speechService.handleSystemAudioChunk(buf),
+      setSystemChannelEnabled: (live) => {
+        if (typeof speechService.setSystemChannelEnabled === "function") {
+          speechService.setSystemChannelEnabled(live);
+        }
+        if (live && typeof speechService.resetChannelForReattach === "function") {
+          speechService.resetChannelForReattach("system");
+        }
+      },
+      reacquireAmbientMic: () => this._reacquireAmbientMic(),
+      settleMs: REWARM_SETTLE_MS,
+      logger,
+    });
+    logger.info("Wake-from-sleep re-warm complete", result);
+    return result;
+  }
+
+  /**
+   * Replay the LAST known ambient state after a wake. If ambient was actively
+   * listening, re-acquire the renderer getUserMedia stream (sleep can evict it)
+   * by resetting the mic VAD channel + replaying `recording-started` (which the
+   * renderer handles by tearing down + re-acquiring capture). If ambient is
+   * desired-but-idle (engine just recovered), start it. NEVER resumes a paused
+   * session (honors `_ambientDesired`).
+   */
+  _reacquireAmbientMic() {
+    if (!this._ambientDesired) {
+      return "paused";
+    }
+    const status = speechService.getStatus ? speechService.getStatus() : {};
+    if (status.isRecording) {
+      if (typeof speechService.resetChannelForReattach === "function") {
+        speechService.resetChannelForReattach("mic");
+      }
+      BrowserWindow.getAllWindows().forEach((w) => {
+        if (!w.isDestroyed()) {
+          try { w.webContents.send("recording-started"); } catch (_) { /* ignore */ }
+        }
+      });
+      return "reacquired";
+    }
+    this._ensureAmbientListening("wake");
+    return "ensured";
+  }
+
   toggleSpeechRecognition() {
     const isAvailable = typeof speechService.isAvailable === 'function' ? speechService.isAvailable() : !!speechService.getStatus?.().isInitialized;
     if (!isAvailable) {
@@ -951,19 +1269,24 @@ class ApplicationController {
     const currentStatus = speechService.getStatus();
     if (currentStatus.isRecording) {
       try {
+        // Interim OFF: record the paused intent FIRST so a concurrent
+        // 'status'/wake re-warm can't auto-resume what the user just paused.
+        this._ambientDesired = false;
         speechService.stopRecording();
         windowManager.hideChatWindow();
-        logger.info("Speech recognition stopped via global shortcut");
+        logger.info("Ambient listening paused via mic control (Alt+R)");
       } catch (error) {
-        logger.error("Error stopping speech recognition:", error);
+        logger.error("Error pausing ambient listening:", error);
       }
     } else {
       try {
+        // Interim ON: resume ambient listening.
+        this._ambientDesired = true;
         speechService.startRecording();
         windowManager.showChatWindow();
-        logger.info("Speech recognition started via global shortcut");
+        logger.info("Ambient listening resumed via mic control (Alt+R)");
       } catch (error) {
-        logger.error("Error starting speech recognition:", error);
+        logger.error("Error resuming ambient listening:", error);
       }
     }
   }
@@ -1223,16 +1546,22 @@ class ApplicationController {
    * asked once the speaker has actually paused — this is what stops one spoken
    * line from producing two separate, slow answers.
    */
-  handleTranscriptionFragment(text) {
+  handleTranscriptionFragment({ text, source } = {}) {
     const fragment = (text || "").trim();
     if (!fragment) {
       return;
     }
+    // Channel tag threaded from the flush ('mic'|'system'); default 'mic' for a
+    // bare/legacy emit. Phase 4 only PRESERVES the tag end-to-end (no mic/system
+    // fusion or dedup — deferred to Phase 6).
+    const channel = source === "system" ? "system" : "mic";
 
-    // Show the live transcript right away in all windows.
-    sessionManager.addUserInput(fragment, 'speech');
+    // Show the live transcript right away in all windows. addUserInput's 2nd arg
+    // stays the input-KIND ('speech'); the audio channel rides as SEPARATE
+    // metadata so the input-kind param is never overloaded.
+    sessionManager.addUserInput(fragment, 'speech', { channel });
     BrowserWindow.getAllWindows().forEach((window) => {
-      window.webContents.send("transcription-received", { text: fragment });
+      window.webContents.send("transcription-received", { text: fragment, source: channel });
     });
 
     this._utteranceBuffer = this._utteranceBuffer
@@ -1520,6 +1849,20 @@ class ApplicationController {
       if (stopping && typeof stopping.catch === "function") stopping.catch(() => {});
     } catch (_) { /* best effort */ }
 
+    // Stop the resident whisper-server we own (own-only; never lingers after
+    // quit). Fire-and-forget — quit must not wait on the SIGTERM->SIGKILL grace.
+    try {
+      const stoppingWhisper = this.getWhisperServerManager().stop();
+      if (stoppingWhisper && typeof stoppingWhisper.catch === "function") stoppingWhisper.catch(() => {});
+    } catch (_) { /* best effort */ }
+
+    // SIGTERM the system-audio tap helper we spawned (own-only; never lingers
+    // after quit). Fire-and-forget — quit must not wait on it.
+    try {
+      const stoppingTap = this.getSystemAudioTapManager().stop();
+      if (stoppingTap && typeof stoppingTap.catch === "function") stoppingTap.catch(() => {});
+    } catch (_) { /* best effort */ }
+
     const sessionStats = sessionManager.getMemoryUsage();
     logger.info("Application shutting down", {
       sessionEvents: sessionStats.eventCount,
@@ -1527,17 +1870,25 @@ class ApplicationController {
     });
   }
 
-  getWhisperInstaller() {
-    if (!this._whisperInstaller) {
-      const WhisperInstaller = require("./src/core/whisper-installer");
-      const { app } = require("electron");
-      this._whisperInstaller = new WhisperInstaller({
-        cwd: process.cwd(),
-        dataDir: app.getPath("userData"),
-        platform: process.platform,
-      });
+  // Resident STT engine (STT-01): supervises the from-source whisper-server,
+  // reports three-level health, transcribes over POST /inference. Lazily
+  // constructed so import-time and tests never spawn a server.
+  getWhisperServerManager() {
+    if (!this._whisperServerManager) {
+      const WhisperServerManager = require("./src/core/whisper-server.manager");
+      this._whisperServerManager = new WhisperServerManager();
     }
-    return this._whisperInstaller;
+    return this._whisperServerManager;
+  }
+
+  // ggml voice-model downloader (STT-02): resumable, SHA256-verified download of
+  // ggml-<model>.bin into <userData>/.whisper-models. Lazily constructed.
+  getWhisperModelDownloader() {
+    if (!this._whisperModelDownloader) {
+      const WhisperModelDownloader = require("./src/core/whisper-model-downloader");
+      this._whisperModelDownloader = new WhisperModelDownloader();
+    }
+    return this._whisperModelDownloader;
   }
 
   // Local engine (PROV-05): adopts/owns the Ollama daemon, ensures the
@@ -1549,6 +1900,19 @@ class ApplicationController {
       this._localModelManager = new LocalModelManager();
     }
     return this._localModelManager;
+  }
+
+  // macOS system-audio tap (STT-04): spawns the Core Audio Process Tap helper,
+  // parses its stderr status, persists grant/deny, and pipes 16 kHz PCM into the
+  // speech service's system channel. Everything sits behind isSupported() (darwin
+  // && >=14.4) + consent + a uniform degrade-to-mic path. Lazily constructed so
+  // import-time and tests never spawn the helper.
+  getSystemAudioTapManager() {
+    if (!this._systemAudioTapManager) {
+      const SystemAudioTapManager = require("./src/core/system-audio-tap.manager");
+      this._systemAudioTapManager = new SystemAudioTapManager();
+    }
+    return this._systemAudioTapManager;
   }
 
   getSettings() {
@@ -1563,11 +1927,9 @@ class ApplicationController {
       selectedIcon: this.appIcon || "terminal",
       windowGap: windowManager.windowGap,
 
-      speechProvider: speechService.provider || "whisper",
-      azureKey: process.env.AZURE_SPEECH_KEY || "",
-      azureRegion: process.env.AZURE_SPEECH_REGION || "",
-      whisperCommand: process.env.WHISPER_COMMAND || "",
-      whisperModel: process.env.WHISPER_MODEL || "turbo",
+      // STT is the single resident whisper engine now (no provider selection).
+      speechProvider: "whisper",
+      whisperModel: process.env.WHISPER_MODEL || "small.en",
       whisperLanguage: process.env.WHISPER_LANGUAGE || "en",
       whisperSegmentMs: process.env.WHISPER_SEGMENT_MS || "4000",
 
@@ -1578,7 +1940,6 @@ class ApplicationController {
       model: config.get("llm.local.model"),
       curatedModels: config.get("llm.local.curatedModels"),
 
-      azureConfigured: !!process.env.AZURE_SPEECH_KEY && !!process.env.AZURE_SPEECH_REGION,
       speechAvailable: this.speechAvailable
     };
   }
@@ -1615,18 +1976,8 @@ class ApplicationController {
       // Writing to .env ensures they survive app restarts and are picked
       // up the next time the app boots.
       const envUpdates = {};
-      if (settings.speechProvider === "azure" || settings.speechProvider === "whisper") {
-        envUpdates.SPEECH_PROVIDER = settings.speechProvider;
-      }
-      if (settings.azureKey !== undefined) {
-        envUpdates.AZURE_SPEECH_KEY = settings.azureKey;
-      }
-      if (settings.azureRegion !== undefined) {
-        envUpdates.AZURE_SPEECH_REGION = settings.azureRegion;
-      }
-      if (settings.whisperCommand !== undefined) {
-        envUpdates.WHISPER_COMMAND = settings.whisperCommand;
-      }
+      // STT is the single resident whisper engine (no provider selection). Only
+      // the whisper-server knobs persist to .env; config.speech.whisper reads them.
       if (settings.whisperModel !== undefined) {
         envUpdates.WHISPER_MODEL = settings.whisperModel;
       }
@@ -1648,12 +1999,6 @@ class ApplicationController {
         envUpdates.LOCAL_MODEL = settings.model;
       }
 
-      // Capture the previous whisper command BEFORE persisting — persistEnvUpdates
-      // mutates process.env in place, so comparing afterwards would always read
-      // equal and skip the speech re-init below (the exact stale-mic-after-install
-      // bug the re-init guards against).
-      const prevWhisperCommand = process.env.WHISPER_COMMAND || '';
-
       const persistedKeys = this.persistEnvUpdates(envUpdates);
 
       if (settings.provider !== undefined || settings.model !== undefined) {
@@ -1662,42 +2007,6 @@ class ApplicationController {
           provider: settings.provider,
           model: settings.model,
         });
-      }
-
-      // Reinitialize speech service when provider OR whisper command
-      // changes. Without the second check, the install flow (which
-      // writes a new whisperCommand after install but keeps the same
-      // provider) would leave the speech service pointing at a stale
-      // (or non-existent) binary, and the main overlay's mic button
-      // would stay hidden / non-functional.
-      const providerChanged = settings.speechProvider && speechService.provider !== settings.speechProvider;
-      const whisperCommandChanged = settings.whisperCommand !== undefined &&
-        prevWhisperCommand !== String(settings.whisperCommand || '');
-      if (providerChanged || whisperCommandChanged) {
-        try {
-          speechService.initializeClient();
-          this.speechAvailable = speechService.isAvailable
-            ? speechService.isAvailable()
-            : false;
-          // Broadcast so any open window (settings, overlay, chat)
-          // can react immediately — especially the main overlay's
-          // mic button, which queries availability on load.
-          const { BrowserWindow } = require("electron");
-          BrowserWindow.getAllWindows().forEach((win) => {
-            if (!win.isDestroyed()) {
-              win.webContents.send("speech-availability", { available: this.speechAvailable });
-            }
-          });
-          logger.info('Speech service reinitialized after settings change', {
-            providerChanged,
-            whisperCommandChanged,
-            speechAvailable: this.speechAvailable,
-          });
-        } catch (e) {
-          logger.warn("Failed to reinitialize speech service after settings change", {
-            error: e.message
-          });
-        }
       }
 
       logger.info("Settings saved successfully", {

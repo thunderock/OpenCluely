@@ -291,31 +291,10 @@ test('getStatus().serverUp stays true when the daemon is HTTP-reachable but glob
   }
 });
 
-// A faithful, hermetic proxy for the Azure Speech SDK browser-DOM shim that
-// speech.service.js installs at main.js startup (speech.service.js:293-308,354):
-// it replaces global.URL with a class that parses ANY input to
-// { hostname:'localhost', port:'', protocol:'https:' } and has no searchParams.
-class FakeBrowserURL {
-  constructor(href) {
-    this.href = href;
-    this.protocol = 'https:';
-    this.host = 'localhost';
-    this.hostname = 'localhost';
-    this.port = '';
-    this.pathname = '/';
-    this.search = '';
-    // NB: no `searchParams` — mirrors the real shim.
-  }
-  toString() { return this.href; }
-}
-
-// ── 9. Regression (ollama-not-detected, DEEPER root cause): serverUp must
-// survive the Azure polyfill poisoning global.URL. The prior fix probes over
-// Node http but parsed this.host with the *global* URL; under the shim that
-// yields hostname 'localhost' + empty port, so probeHttp targets localhost:443
-// instead of 127.0.0.1:<port> → false. _probeVersion must parse with the NATIVE
-// node:url URL so a reachable daemon reports serverUp regardless of the global.
-test('getStatus().serverUp stays true when the Azure polyfill has poisoned global.URL', async () => {
+// ── 9. serverUp reflects a reachable adopted daemon. _probeVersion parses
+// this.host with the native node:url URL and probes over Node http (probeHttp),
+// so a loopback daemon that answers /api/version reports serverUp true.
+test('getStatus().serverUp is true for a reachable adopted daemon', async () => {
   const port = await getFreePort();
   const daemon = http.createServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -330,16 +309,10 @@ test('getStatus().serverUp stays true when the Azure polyfill has poisoned globa
   });
   manager.host = `http://127.0.0.1:${port}`;
 
-  // Poison AFTER construction so this isolates _probeVersion's CALL-TIME URL
-  // parsing (independent of any constructor-time global repair): the probe must
-  // use the native URL even while the ambient global URL is the browser shim.
-  const origURL = globalThis.URL;
-  globalThis.URL = FakeBrowserURL;
   try {
     const st = await manager.getStatus();
-    assert.equal(st.serverUp, true, 'a reachable daemon must be serverUp even under a poisoned global URL');
+    assert.equal(st.serverUp, true, 'a reachable loopback daemon must report serverUp');
   } finally {
-    globalThis.URL = origURL;
     await new Promise((resolve) => daemon.close(resolve));
   }
 });

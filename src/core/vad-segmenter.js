@@ -2,9 +2,9 @@
  * Pure voice-activity-detection segmentation state machine.
  *
  * Lifted verbatim from SpeechService so the VAD decision logic can be unit
- * tested without booting the app (SpeechService mutates global.window,
- * try/requires the Azure SDK, and reads config/process.env at import time, so
- * it cannot be required in a test). This module owns ONLY the VAD-decision
+ * tested without booting the app (SpeechService try/requires a native audio
+ * recorder and reads config/process.env at import time, so it is awkward to
+ * require directly in a test). This module owns ONLY the VAD-decision
  * state — energy/hysteresis/noise-floor adaptation, the pre-roll ring, and
  * speech/silence accumulation. Buffer storage and the Whisper spawn/flush stay
  * in SpeechService; ingest() returns an action telling the caller what to do
