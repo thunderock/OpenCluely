@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Foundation — Supervisor, Tests, Lint, Makefile** - Generic service supervisor + a test/lint/Makefile safety net for safe refactoring
 - [x] **Phase 2: Provider Seam — Wrap Gemini Verbatim** - `LLMProvider` abstraction + `RequestBuilder`; app still works on Gemini, call-sites unchanged
 - [x] **Phase 3: Local Engine + Cloud Removal** - Local multimodal model as the primary/default path; Gemini removed last, after Local is proven (Azure is STT-only → removed in Phase 4 with the STT replacement) (completed 2026-07-16)
-- [ ] **Phase 4: Continuous Hearing — Resident STT + Ambient Listening** - Resident whisper.cpp continuously transcribes mic + macOS system audio from launch to quit
+- [x] **Phase 4: Continuous Hearing — Resident STT + Ambient Listening** - Resident whisper.cpp continuously transcribes mic + macOS system audio from launch to quit (completed 2026-07-16; system-audio capture verification + attended real-world validation deferred to Phase 8 by human decision)
 - [ ] **Phase 5: Continuous Capture, Notes & Hardening** - Throttled/deduped screen capture + bounded `.md` context, shipped with output sanitization, TCC recovery, and IPC scoping
 - [ ] **Phase 6: Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI** - After each pause, a relevant streamed answer appears; relevance gate + listening indicator + kill switch
 - [ ] **Phase 7: CLI Backup Providers — Claude / Codex** - On-demand escalation + auto-fallback to Claude/Codex CLI, reusing terminal auth, never on the per-pause path
@@ -85,7 +85,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. On macOS, audio from the other party (system/loopback via a macOS Core Audio Process Tap, macOS 14.4+; mic-only below the floor) is transcribed as a separate channel from the mic, so a question you only *hear* is captured.
   5. Two minutes of silence produces zero transcripts (the silence-hallucination filter holds under always-on).
   6. The Azure Speech SDK and its browser-DOM polyfill are fully removed (deferred here from Phase 3 — Azure is STT-only, kept through Phase 3 so voice never breaks; deleted once the resident whisper.cpp engine replaces it).
-**Plans**: TBD (derived in /gsd:plan-phase) — RESEARCH FLAG: in-process `smart-whisper` vs supervised `whisper-server`; validate native-addon ABI against Electron 29 early
+**Plans**: 9 plans (7 waves) — all complete 2026-07-16 (RESEARCH resolved: supervised `whisper-server` chosen — no native addon, sidesteps Electron-29 ABI)
+- [x] 04-01-PLAN.md — WhisperServerManager (ServiceSupervisor consumer) + from-source whisper-server build + collapsed config (Wave 1)
+- [x] 04-02-PLAN.md — ggml model downloader: resumable + SHA256 + atomic rename into userData (Wave 1)
+- [x] 04-03-PLAN.md — Rewire flush to resident whisper-server; delete Python subprocess + venv installer (Wave 2)
+- [x] 04-04-PLAN.md — Two independent per-channel pipelines (mic/system) + source tag through the sink (Wave 3)
+- [x] 04-05-PLAN.md — macOS Core Audio Process Tap helper + SystemAudioTapManager (signing spike → Phase 8) (Wave 4)
+- [x] 04-06-PLAN.md — Ambient auto-listen launch→quit + sleep/wake re-warm + device-change re-attach (Wave 5)
+- [x] 04-07-PLAN.md — Onboarding + settings STT UI collapsed onto the resident engine (Wave 3)
+- [x] 04-08-PLAN.md — Validation gate: latency/memory/silence smoke (attended real-world run → pre-ship/Phase 8) (Wave 6)
+- [x] 04-09-PLAN.md — Azure SDK + browser-DOM polyfill removal; ensureNativeGlobalURL retired (Wave 7)
 
 ### Phase 5: Continuous Capture, Notes & Hardening
 **Goal**: The app's new screen-capture and notes inputs are in place, and the render/permission threat surface they create is hardened *in the same phase* — before the always-on firehose turns on in Phase 6.
@@ -153,8 +162,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 |-------|----------------|--------|-----------|
 | 1. Foundation — Supervisor, Tests, Lint, Makefile | 5/5 | Complete | 2026-07-14 |
 | 2. Provider Seam — Wrap Gemini Verbatim | 3/3 | Complete | 2026-07-14 |
-| 3. Local Engine + Cloud Removal | 0/8 | Complete    | 2026-07-16 |
-| 4. Continuous Hearing — Resident STT + Ambient Listening | 0/TBD | Not started | - |
+| 3. Local Engine + Cloud Removal | 8/8 | Complete    | 2026-07-16 |
+| 4. Continuous Hearing — Resident STT + Ambient Listening | 9/9 | Complete | 2026-07-16 |
 | 5. Continuous Capture, Notes & Hardening | 0/TBD | Not started | - |
 | 6. Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI | 0/TBD | Not started | - |
 | 7. CLI Backup Providers — Claude / Codex | 0/TBD | Not started | - |
