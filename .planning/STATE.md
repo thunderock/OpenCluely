@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-stopped_at: Completed 05-04-PLAN.md (TCC permission-loss detection + guided recovery, SEC-02)
-last_updated: "2026-07-17T06:12:20.769Z"
+stopped_at: Completed 05-05-PLAN.md (sender-scoped IPC gate + per-class preload split, SEC-03)
+last_updated: "2026-07-17T06:40:59.827Z"
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 31
-  completed_plans: 29
+  completed_plans: 30
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 05 (continuous-capture-notes-hardening) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Plan: 5 of 6
 | Phase 05 P02 | 12 min | 2 tasks | 10 files |
 | Phase 05 P03 | 18 min | 3 tasks | 8 files |
 | Phase 05 P04 | 20 min | 3 tasks | 5 files |
+| Phase 05 P05 | 24 min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -116,6 +117,8 @@ Load-bearing sequencing decisions driving this roadmap:
 - [Phase 05]: CONT-05 notes loader: budget bounds the FINAL assembled string (headers+separators); whole-file stop-before-bust via pure prefix-stable costing; launch-only reload (config read at load() time, NOTES_FOLDER restart-to-apply)
 - [Phase 05]: select-notes-folder IPC added plain (settings audience) — 05-05 must add it to the channel→audience table when converting handlers to the guarded form
 - [Phase 05]: SEC-02 TCC monitor: pure sticky-lost cross-check state machine (both signals required, transition-only emission, entry-tracked disagreement warns); open-privacy-settings (enum->x-apple URL in MAIN) + relaunch-app added as PLAIN handlers and permission-status outbound broadcast — 05-05 must add both inbound channels to the channel->audience table (suggested audience: main)
+- [Phase 05]: SEC-03 IPC gate: all 64 ipcMain registrations wrapped in guardedHandle/guardedOn resolving event.sender.id via a WindowManager WebContents-id registry (set before loadFile, cleaned on destroyed) against the 60-row CHANNEL_AUDIENCES table in src/core/ipc-scope.js; default-deny, deny returns {ok:false,error:'denied'} + 'IPC denied' warn (never throw); unaudited control channels widened to main/settings only, never chat/llmResponse; llmResponse+chat load minimal preload-overlay.js (zero settings/model/whisper APIs, legacy send = quit-app+window-loaded); completeness reflection test fails CI on any channel registered without a table row; boot produced zero denials, no audience row widened
+- [Phase 05]: Unused legacy channels flagged for Phase 8 (no table row; default-deny covers them): hide-settings, get-llm-session-history, format-session-history, toggle-recording, toggle-interaction-mode, window-loaded; also chat-window-ready has no live sender
 
 ### Pending Todos
 
@@ -150,9 +153,9 @@ Deferred (captured, not blocking):
 
 ## Session Continuity
 
-Last session: 2026-07-17T06:12:20.764Z
+Last session: 2026-07-17T06:40:59.823Z
 
-Stopped at: Completed 05-04-PLAN.md (TCC permission-loss detection + guided recovery, SEC-02)
+Stopped at: Completed 05-05-PLAN.md (sender-scoped IPC gate + per-class preload split, SEC-03)
 
 Last session (prior): 2026-07-16 — Phase 4 CODE-COMPLETE (wave 7). 04-09 (cloud STT removal, STT-05/SC6 — the FINAL plan of Phase 4) COMPLETE. Prove-then-remove, mirroring Phase 3's Gemini removal. Task 1 (the prove-then-remove human-verify gate) was human-approved at the orchestrator level (2026-07-16, "Approved — delete Azure") on the 04-08 keyless proof — recorded as approved, NOT re-run. Task 2 (b0780dc, feat): deleted the ~380-line browser-DOM polyfill + the SDK require + EVERY cloud code path in speech.service.js (init/start/stop/cleanup cloud branches, `_initializeAzureClient`, `_startAzureRecording`, `recognizeFromFile` [deleted whole — cloud-only, whisper branch unreachable], the cloud `testConnection` branch, `_getConfiguredProvider` [→ provider hardcoded 'whisper'], push-stream ingest, cloud-only state) → 1648→918 lines; dropped `speech.provider`/`speech.azure` from config (speech.whisper is the ONLY speech config); uninstalled `microsoft-cognitiveservices-speech-sdk` (+8 deps) + refreshed lockfile; KEPT `node-record-lpcm16`. Task 3 (dec5a55, feat): removed the whole cloud surface — main.js cloud getters/env writes + provider-change re-init; onboarding card/panel/inputs/state/handlers/save/summary (speech step = whisper-or-skip; fixed stale "Requires Python"); settings provider dropdown + cloud fields + note + dead Python CLI inputs + their refs/logic; first-run cloud/whisper `.env` template + dead fields + orphaned `_readEnv`/`parseEnv`; env.example cloud keys + the stale Python-whisper seed (the 04-07-deferred item, closed). preload.js needed NO change. Task 4 (cd5b383, refactor): retired `ensureNativeGlobalURL` fully (definition + export + 4 call sites [incl. the undocumented whisper-server.manager.js one — Rule-3] + 3 poison tests) while KEEPING `nodeFetch` + native URL + `dangerouslyAllowBrowser`; converted the 3 poison-sim tests to plain reachable-daemon / network-free wiring tests (kept nodeFetch native-URL + stream-close coverage); scrubbed stale global.URL/polyfill/"Azure SDK" comments in whisper-model-downloader.js + vad-segmenter.js. Gates: `make run_tests` 145/145, `make lint` 0, keyless LocalProvider wiring check passes, headless boot degrades-to-mic clean (windowCount 4, zero uncaught). Net −1218 lines / 20 files. 3 deviations (2 Rule-3 blocking + 1 Rule-1). STT-05/SC6 = DONE — STT is the single resident whisper.cpp engine, no provider selection/cloud UI/env/config. Cosmetic residue LEFT (out of scope): `webapp/index.html:345` marketing "Azure" copy → Phase 9. 04-09-SUMMARY.md written (self-check PASSED); STATE updated manually (gsd-tools no-op on this prose STATE). All commits local/unpushed on gsd/phase-04-… branch. NEXT: the human merges Phase 4 → main + pushes (never auto), THEN post-merge memory capture (global `ashutosh_setup/setup/memory/` + repo `./MEMORY.md`) + branch/plan Phase 5. Prior-session (04-06) detail below.
 
