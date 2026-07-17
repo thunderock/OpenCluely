@@ -1,3 +1,4 @@
+const path = require('path');
 const { BrowserWindow, screen, desktopCapturer, shell } = require('electron');
 const logger = require('../core/logger').createServiceLogger('WINDOW');
 const config = require('../core/config');
@@ -5,6 +6,12 @@ const config = require('../core/config');
 class WindowManager {
   constructor() {
     this.windows = new Map();
+    // SEC-03: WebContents-id → window type registry. The main-process IPC
+    // gate (guardedHandle/guardedOn in main.js) resolves event.sender.id
+    // through this map to decide the sender's window class. Entries are
+    // inserted immediately after BrowserWindow construction (BEFORE any
+    // loadFile — no early-IPC race) and removed on webContents 'destroyed'.
+    this.webContentsTypes = new Map();
     this.activeWindow = 'main';
     this.isInteractive = true; // default to interactive so windows are clickable/drag-able
     this.isVisible = false;
@@ -269,12 +276,23 @@ class WindowManager {
       throw new Error(`Unknown window type: ${type}`);
     }
 
+    // SEC-03 per-window-class preload split: the model-output renderers
+    // (llmResponse, chat) get the minimal overlay bridge with ZERO
+    // settings/model/whisper APIs; every other class keeps the privileged
+    // preload.js baked into config. Defense-in-depth under the main-process
+    // sender gate (ipc-scope.js) — a compromised overlay ignoring its
+    // preload still hits the main-process allowlist.
+    const preloadPath = (type === 'llmResponse' || type === 'chat')
+      ? path.join(__dirname, '../../preload-overlay.js')
+      : config.get('window.webPreferences').preload; // preload.js (privileged: main/settings/onboarding)
+
     // Base options
     const baseOptions = {
       width: windowConfig.width,
       height: windowConfig.height,
       webPreferences: {
         ...config.get('window.webPreferences'),
+        preload: preloadPath, // AFTER the spread so the per-class override wins
         nodeIntegration: false,
         contextIsolation: true,
         backgroundThrottling: false,
@@ -447,6 +465,13 @@ class WindowManager {
     browserWindowOptions.simpleFullscreen = false;
 
   const window = new BrowserWindow(browserWindowOptions);
+
+    // SEC-03: register the sender identity IMMEDIATELY after construction,
+    // BEFORE loadFile — an early IPC from the loading page must already
+    // resolve to its window type (a miss is a default-deny, never a crash).
+    const wcId = window.webContents.id;
+    this.webContentsTypes.set(wcId, type);
+    window.webContents.on('destroyed', () => this.webContentsTypes.delete(wcId));
 
     // External links (GitHub, the website, Google AI Studio, etc.) must open in
     // the user's real browser, never inside the frameless overlay windows.
@@ -1491,6 +1516,13 @@ class WindowManager {
 
   getWindow(type) {
     return this.windows.get(type);
+  }
+
+  // SEC-03: resolve an IPC event.sender.id to its window class for the
+  // channel-audience gate. Unknown/destroyed senders resolve to null,
+  // which isChannelAllowed treats as deny.
+  getWindowTypeByWebContentsId(id) {
+    return this.webContentsTypes.get(id) || null;
   }
 
   getActiveWindow() {

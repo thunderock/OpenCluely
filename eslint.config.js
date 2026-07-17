@@ -36,6 +36,7 @@ module.exports = [
     files: [
       'main.js',
       'preload.js',
+      'preload-overlay.js',
       'prompt-loader.js',
       'speech-recognition.js',
       'src/core/**/*.js',
