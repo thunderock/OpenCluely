@@ -24,3 +24,7 @@ DONE — scope grew to "union across all three clients" per follow-up request.
 - setup.bash (ashutosh_setup): new opencode mirroring section — jq-merge under `.mcp`, idempotent per name, never clobbers existing entries; mirrors the Claude/Codex conditionals (HF_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN / GLIMMER_DB).
 - Verified: `opencode mcp list` 7/8 connected; `claude mcp list` 7/8; `codex mcp list` parses all. `ada` fails to connect in Claude AND opencode alike (needs OAuth / VPN — pre-existing, not a mirroring defect).
 - Note: setup.bash still writes `~/slurm_scripts` paths (its clone location); live configs on this machine use `~/personal/slurm_scripts`. Re-running setup on this machine will no-op (idempotency guard), so no clobber.
+
+## Addendum (2026-07-17, same day)
+
+`repo-context` subsequently REMOVED from all three clients + setup.bash by request (Claude user & slurm_scripts local scope, Codex TOML block, opencode mcp entry, all three setup.bash registrations). The union is now 7 servers (+ conditional postgres). slurm_scripts' `uv sync` + digest daemon in setup.bash stay — they're independent of MCP.
