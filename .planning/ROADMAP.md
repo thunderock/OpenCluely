@@ -106,7 +106,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Model output containing hostile markdown/HTML (e.g., an `<img onerror>` lifted from on-screen text) is rendered inert at every `innerHTML` sink via DOMPurify.
   4. After screen or mic permission is lost (e.g., all-black frames / mic status after an update), the app detects it and guides the user to re-grant (macOS TCC recovery).
   5. The response/overlay renderers cannot read settings or exfiltrate keys — privileged IPC (settings read, `openExternal`, clipboard) is scoped by sender.
-**Plans**: TBD (derived in /gsd:plan-phase)
+**Plans**: 6 plans (5 waves)
+- [ ] 05-01-PLAN.md — Continuous capture loop: pure frame-dedup (dHash) + downscaled 2s tick + lock/sleep lifecycle (Wave 1)
+- [ ] 05-02-PLAN.md — DOMPurify central policy + every model-output innerHTML sink sanitized + link routing (Wave 1)
+- [ ] 05-03-PLAN.md — Notes context loader (12k whole-file budget) wired into RequestBuilder.mdContext + settings UI (Wave 2)
+- [ ] 05-04-PLAN.md — TCC loss detection (status + black-frame cross-check) + recovery banner + deep-link/relaunch IPC (Wave 3)
+- [ ] 05-05-PLAN.md — Sender-scoped IPC: channel audience table + guarded handlers + per-class preload split (Wave 4)
+- [ ] 05-06-PLAN.md — Phase gate: full automated suite + attended five-pillar verification checkpoint (Wave 5)
 
 ### Phase 6: Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI
 **Goal**: The core value — after each natural pause, a relevant answer streams into the stealth overlay, generated locally from screen + speech + notes, surfaced only when actually answerable, with the trust affordances that make always-on acceptable.
