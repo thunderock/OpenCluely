@@ -7,7 +7,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeButton = document.getElementById('closeButton');
     const quitButton = document.getElementById('quitButton');
     const windowGapInput = document.getElementById('windowGap');
-    const codingLanguageSelect = document.getElementById('codingLanguage');
     const activeSkillSelect = document.getElementById('activeSkill');
     const iconGrid = document.getElementById('iconGrid');
 
@@ -92,11 +91,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadSettingsIntoUI = (settings) => {
         if (windowGapInput) windowGapInput.value = settings.windowGap || '';
 
-        // Set C++ as default if no coding language is specified
-        if (codingLanguageSelect) {
-            codingLanguageSelect.value = settings.codingLanguage || 'python';
-        }
-
         if (settings.activeSkill && activeSkillSelect) activeSkillSelect.value = settings.activeSkill;
 
         // Handle icon selection
@@ -150,21 +144,12 @@ document.addEventListener('DOMContentLoaded', () => {
         window.electronAPI.receive('settings-window-shown', () => {
             requestCurrentSettings();
         });
-
-    // Listen for coding language changes from other windows via helper
-    window.electronAPI.onCodingLanguageChanged((event, data) => {
-            if (data && data.language && codingLanguageSelect) {
-                codingLanguageSelect.value = data.language;
-                console.log('Language updated from overlay window:', data.language);
-            }
-    });
     }
 
     // Save settings helper function
     const saveSettings = () => {
         const settings = {};
         if (windowGapInput) settings.windowGap = windowGapInput.value;
-        if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
 
         // Provider + local model (PROV-06)
@@ -313,20 +298,6 @@ document.addEventListener('DOMContentLoaded', () => {
             input.addEventListener('blur', saveSettings);
         }
     });
-
-    // Language selection handler
-    if (codingLanguageSelect) {
-        codingLanguageSelect.addEventListener('change', (e) => {
-            const lang = e.target.value;
-            // use electronAPI so main broadcast is consistent
-            if (window.electronAPI && window.electronAPI.saveSettings) {
-                window.electronAPI.saveSettings({ codingLanguage: lang });
-            } else {
-                // fallback
-                saveSettings();
-            }
-        });
-    }
 
     // Skill selection handler
     if (activeSkillSelect) {

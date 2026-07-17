@@ -339,44 +339,6 @@ class MainWindowUI {
             }
         });
 
-        // Language dropdown
-        this.languageSelect = document.getElementById('codingLanguage');
-        if (this.languageSelect) {
-            // Set default to Python if no value is set
-            this.languageSelect.value = 'python';
-
-            // Initialize with current setting
-            if (window.electronAPI && window.electronAPI.getSettings) {
-                window.electronAPI.getSettings().then(settings => {
-                    if (settings && settings.codingLanguage) {
-                        this.languageSelect.value = settings.codingLanguage;
-                    } else {
-                        // Save Python as default if no language is set
-                        this.languageSelect.value = 'python';
-                        window.electronAPI.saveSettings({ codingLanguage: 'python' });
-                    }
-                }).catch(() => {
-                    // Fallback to Python on error
-                    this.languageSelect.value = 'python';
-                });
-            }
-
-            this.languageSelect.addEventListener('change', (e) => {
-                const lang = e.target.value;
-                if (window.electronAPI && window.electronAPI.saveSettings) {
-                    window.electronAPI.saveSettings({ codingLanguage: lang });
-                }
-                // Resize for any width change
-                setTimeout(() => {
-                    const commandTab = document.querySelector('.command-tab');
-                    if (commandTab && window.electronAPI && window.electronAPI.resizeWindow) {
-                        const rect = commandTab.getBoundingClientRect();
-                        window.electronAPI.resizeWindow(Math.ceil(rect.width), Math.ceil(rect.height));
-                    }
-                }, 50);
-            });
-        }
-
         // Info button / shortcuts popover
         if (this.infoButton && this.shortcutsPopover) {
             this.infoButton.addEventListener('click', (e) => {
@@ -458,20 +420,6 @@ class MainWindowUI {
             window.electronAPI.onSpeechAvailability((event, data) => {
                 this.speechAvailable = !!(data && data.available);
                 this.applyMicVisibility();
-            });
-
-            // Listen for coding language changes from other windows
-            window.electronAPI.onCodingLanguageChanged((event, data) => {
-                if (data && data.language && this.languageSelect) {
-                    // avoid clobbering if same value
-                    if (this.languageSelect.value !== data.language) {
-                        this.languageSelect.value = data.language;
-                    }
-                    logger.debug('Language updated from other window', {
-                        component: 'MainWindowUI',
-                        language: data.language
-                    });
-                }
             });
 
             // Listen for main window shown event to refresh speech availability

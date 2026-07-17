@@ -145,7 +145,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // SEC-02 receive-only: transition-only { screen:'ok'|'lost', mic:'ok'|'lost',
   // reason } broadcasts from the TCC monitor drive the recovery banner.
   onPermissionStatus: (callback) => ipcRenderer.on('permission-status', callback),
-  onCodingLanguageChanged: (callback) => ipcRenderer.on('coding-language-changed', callback),
   onMainWindowShown: (callback) => ipcRenderer.on('main-window-shown', callback),
   
   // Generic receive method
