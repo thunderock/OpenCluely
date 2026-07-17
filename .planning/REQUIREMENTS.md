@@ -41,7 +41,7 @@ Requirements for this milestone. Each maps to a roadmap phase.
 - [ ] **CONT-01**: A pause-triggered orchestrator fuses recent transcript + current screen frame + md-context + history at each natural pause and routes it to the local provider
 - [ ] **CONT-02**: A relevance gate runs a cheap pre-filter (heuristic / `seemsLikeQuestion`) before invoking the model, and the model may abstain — a suggestion surfaces only when it's actually answerable
 - [ ] **CONT-03**: Suggestions stream token-by-token into the overlay (fixing the currently-dead `-chunk` path) and are ephemeral — they auto-clear/replace on topic change and never stack a backlog
-- [ ] **CONT-04**: Continuous screen capture runs on a throttled interval with downscale-before-encode and frame-diff dedup (unchanged frames are skipped); the image is sent directly to the model (no OCR)
+- [x] **CONT-04**: Continuous screen capture runs on a throttled interval with downscale-before-encode and frame-diff dedup (unchanged frames are skipped); the image is sent directly to the model (no OCR)
 - [ ] **CONT-05**: On startup the app loads a settings-configured folder of `.md` files as bounded standing context, reloaded each launch, with a size budget
 - [ ] **CONT-06**: A persistent, self-visible "listening / watching" indicator always shows the app's capture state
 - [ ] **CONT-07**: A one-click pause/kill switch instantly halts all listening + watching, reachable without opening settings
@@ -139,7 +139,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | CONT-01 | Phase 6 | Pending |
 | CONT-02 | Phase 6 | Pending |
 | CONT-03 | Phase 6 | Pending |
-| CONT-04 | Phase 5 | Pending |
+| CONT-04 | Phase 5 | Complete |
 | CONT-05 | Phase 5 | Pending |
 | CONT-06 | Phase 6 | Pending |
 | CONT-07 | Phase 6 | Pending |
