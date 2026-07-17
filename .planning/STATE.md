@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to execute
-stopped_at: Completed 05-01-PLAN.md (continuous capture loop)
-last_updated: "2026-07-17T05:13:51.232Z"
+stopped_at: Completed 05-02-PLAN.md (DOMPurify at every model-output sink)
+last_updated: "2026-07-17T05:15:56.786Z"
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 31
-  completed_plans: 26
+  completed_plans: 27
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 ## Current Position
 
 Phase: 05 (continuous-capture-notes-hardening) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Plan: 2 of 6
 | Phase 04 P06 | ~15 min | 2 tasks | 7 files |
 | Phase 04 P09 | 27 min | 3 tasks (Task-1 gate human-approved) | 20 files |
 | Phase 05 P01 | 12 min | 3 tasks | 5 files |
+| Phase 05 P02 | 12 min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -108,6 +109,8 @@ Load-bearing sequencing decisions driving this roadmap:
 
 - [Phase 04]: 04-09 (STT-05/SC6) COMPLETE — the FINAL plan of Phase 4: cloud STT fully removed, prove-then-remove (mirrors Phase 3's Gemini removal). Task 1 (prove-then-remove human-verify gate) was human-approved at the orchestrator level (2026-07-16, "Approved — delete Azure") on the 04-08 keyless proof (145/145 tests + loopback inference smoke + latency/memory/silence spot-check; real-world run deferred to pre-ship/Phase 8) — recorded as approved, NOT re-run. Task 2 (b0780dc, feat): deleted the ~380-line browser-DOM polyfill (the `if (typeof window === 'undefined')` block that fabricated window/document/navigator/AudioContext + a fake URL class and clobbered global.URL/Blob/File at module load) + the SDK require + EVERY cloud code path in speech.service.js (`_initializeAzureClient`, `_startAzureRecording`, `recognizeFromFile` [cloud-only, deleted whole — its whisper branch was unreachable dead code], the cloud `testConnection` branch, `_getConfiguredProvider` [deleted → provider hardcoded 'whisper'], the init/start/stop/cleanup cloud branches, the push-stream ingest, cloud-only state `recognizer/speechConfig/audioConfig/pushStream/maxRetries`) → speech.service.js 1648→918 lines; dropped `speech.provider`/`speech.azure` from config (speech.whisper is the ONLY speech config); uninstalled `microsoft-cognitiveservices-speech-sdk` (+8 transitive deps) via `npm uninstall --ignore-scripts` + refreshed lockfile; KEPT `node-record-lpcm16` (Linux mic). Task 3 (dec5a55, feat): removed the whole cloud surface — main.js getSettings cloud getters + saveSettings cloud env writes + the provider-change re-init block (all keyed on now-deleted settings); onboarding cloud choice-card + key/region panel/inputs + state + handlers + save persistence + summary row (speech step = local-whisper-or-skip; fixed stale "Requires Python" copy); settings provider dropdown + cloud fields + note + the dead Python CLI inputs (whisperCommand/Model/Language/SegmentMs) + their refs/load/save/change-listeners/`updateSpeechFieldStates`; first-run cloud/whisper `.env` template seed + dead getStatus fields + orphaned `_readEnv`/`parseEnv` import; env.example cloud keys + the stale Python-whisper seed (the 04-07-deferred item, closed here) → whisper-server knobs left as commented overrides. preload.js needed NO change (no cloud bridge). Task 4 (cd5b383, refactor): retired `ensureNativeGlobalURL` fully (definition + export from local-transport.js + call sites in local.provider.js, local-model.manager.js, AND whisper-server.manager.js [a 4th, undocumented call site added by 04-01 after the plan's blast-radius snapshot — Rule-3 auto-fix] + the 3 poison-simulation tests) while KEEPING `nodeFetch` (the independent Electron-main Chromium-net loopback fix, NOT cloud) + native URL + normalizeHeaders + `dangerouslyAllowBrowser` (defensive). The 3 poison tests: deleted the restore-poisoned-URL test; converted the manager + provider poison tests to plain reachable-daemon / network-free wiring tests (option b — kept serverUp + client-init coverage); kept the nodeFetch native-URL-parse + stream-close(reader.cancel) coverage. Also scrubbed stale global.URL/polyfill/"Azure SDK" comments in whisper-model-downloader.js + vad-segmenter.js (the plan's own grep gates require them clean). Gates: `make run_tests` 145/145 (the 3 updated suites + all others), `make lint` 0, keyless LocalProvider wiring check passes (isAvailable/generateStream fns, ollama.list() shape reachable network-free), headless electron boot degrades-to-mic clean (windowCount 4, "Voice model not downloaded yet", zero uncaught). Net −1218 lines across 20 files. 3 deviations (2 Rule-3 blocking: 4th call site + stale comments; 1 Rule-1: unused fs require). Cosmetic residue LEFT (optional, out of scope — not in files_modified): `webapp/index.html:345` marketing "Azure Speech" copy → Phase-9 website. Commits b0780dc/dec5a55/cd5b383 + the docs commit; SUMMARY = 04-09-SUMMARY.md (self-check PASSED). LOCKED LESSON: when retiring a shared helper, grep the WHOLE repo by symbol — the plan's "2 call sites" were actually 4.
 - [Phase 05]: CONT-04 capture: JPEG q80 hold-latest frame; capture-at-target via thumbnailSize + display_id match; 256-bit dHash threshold 10; loop start mirrors ambient listening (post-onboarding), pause on lock/sleep only
+- [Phase 05]: SEC-01 recovery panel: sanitized button-free shell + createElement'd buttons post-assignment (locked FORBID button policy); shell styles moved to lu-* classes since FORBID_ATTR strips style=
+- [Phase 05]: eslint dual-load fix: scoped Block 1b grants browser globals to src/core/sanitize-policy.js only — no repo-wide rule weakening
 
 ### Pending Todos
 
@@ -142,9 +145,9 @@ Deferred (captured, not blocking):
 
 ## Session Continuity
 
-Last session: 2026-07-17T05:13:51.228Z
+Last session: 2026-07-17T05:15:56.782Z
 
-Stopped at: Completed 05-01-PLAN.md (continuous capture loop)
+Stopped at: Completed 05-02-PLAN.md (DOMPurify at every model-output sink)
 
 Last session (prior): 2026-07-16 — Phase 4 CODE-COMPLETE (wave 7). 04-09 (cloud STT removal, STT-05/SC6 — the FINAL plan of Phase 4) COMPLETE. Prove-then-remove, mirroring Phase 3's Gemini removal. Task 1 (the prove-then-remove human-verify gate) was human-approved at the orchestrator level (2026-07-16, "Approved — delete Azure") on the 04-08 keyless proof — recorded as approved, NOT re-run. Task 2 (b0780dc, feat): deleted the ~380-line browser-DOM polyfill + the SDK require + EVERY cloud code path in speech.service.js (init/start/stop/cleanup cloud branches, `_initializeAzureClient`, `_startAzureRecording`, `recognizeFromFile` [deleted whole — cloud-only, whisper branch unreachable], the cloud `testConnection` branch, `_getConfiguredProvider` [→ provider hardcoded 'whisper'], push-stream ingest, cloud-only state) → 1648→918 lines; dropped `speech.provider`/`speech.azure` from config (speech.whisper is the ONLY speech config); uninstalled `microsoft-cognitiveservices-speech-sdk` (+8 deps) + refreshed lockfile; KEPT `node-record-lpcm16`. Task 3 (dec5a55, feat): removed the whole cloud surface — main.js cloud getters/env writes + provider-change re-init; onboarding card/panel/inputs/state/handlers/save/summary (speech step = whisper-or-skip; fixed stale "Requires Python"); settings provider dropdown + cloud fields + note + dead Python CLI inputs + their refs/logic; first-run cloud/whisper `.env` template + dead fields + orphaned `_readEnv`/`parseEnv`; env.example cloud keys + the stale Python-whisper seed (the 04-07-deferred item, closed). preload.js needed NO change. Task 4 (cd5b383, refactor): retired `ensureNativeGlobalURL` fully (definition + export + 4 call sites [incl. the undocumented whisper-server.manager.js one — Rule-3] + 3 poison tests) while KEEPING `nodeFetch` + native URL + `dangerouslyAllowBrowser`; converted the 3 poison-sim tests to plain reachable-daemon / network-free wiring tests (kept nodeFetch native-URL + stream-close coverage); scrubbed stale global.URL/polyfill/"Azure SDK" comments in whisper-model-downloader.js + vad-segmenter.js. Gates: `make run_tests` 145/145, `make lint` 0, keyless LocalProvider wiring check passes, headless boot degrades-to-mic clean (windowCount 4, zero uncaught). Net −1218 lines / 20 files. 3 deviations (2 Rule-3 blocking + 1 Rule-1). STT-05/SC6 = DONE — STT is the single resident whisper.cpp engine, no provider selection/cloud UI/env/config. Cosmetic residue LEFT (out of scope): `webapp/index.html:345` marketing "Azure" copy → Phase 9. 04-09-SUMMARY.md written (self-check PASSED); STATE updated manually (gsd-tools no-op on this prose STATE). All commits local/unpushed on gsd/phase-04-… branch. NEXT: the human merges Phase 4 → main + pushes (never auto), THEN post-merge memory capture (global `ashutosh_setup/setup/memory/` + repo `./MEMORY.md`) + branch/plan Phase 5. Prior-session (04-06) detail below.
 

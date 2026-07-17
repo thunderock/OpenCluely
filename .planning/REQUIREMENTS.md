@@ -48,7 +48,7 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 ### Hardening (SEC)
 
-- [ ] **SEC-01**: All model output is sanitized (DOMPurify) before `innerHTML` rendering at every sink — shipped together with continuous capture / md-context
+- [x] **SEC-01**: All model output is sanitized (DOMPurify) before `innerHTML` rendering at every sink — shipped together with continuous capture / md-context
 - [ ] **SEC-02**: On macOS the app detects loss of screen/mic capture permission after an update (e.g. all-black frames / mic status) and guides the user to re-grant (TCC recovery)
 - [ ] **SEC-03**: Privileged IPC (settings read, `openExternal`, clipboard) is scoped so the response/overlay renderers can't exfiltrate settings or keys
 
@@ -143,7 +143,7 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | CONT-05 | Phase 5 | Pending |
 | CONT-06 | Phase 6 | Pending |
 | CONT-07 | Phase 6 | Pending |
-| SEC-01 | Phase 5 | Pending |
+| SEC-01 | Phase 5 | Complete |
 | SEC-02 | Phase 5 | Pending |
 | SEC-03 | Phase 5 | Pending |
 | GEN-01 | Phase 3 | Complete |
