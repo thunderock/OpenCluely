@@ -109,7 +109,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 6 plans (5 waves)
 - [x] 05-01-PLAN.md — Continuous capture loop: pure frame-dedup (dHash) + downscaled 2s tick + lock/sleep lifecycle (Wave 1)
 - [x] 05-02-PLAN.md — DOMPurify central policy + every model-output innerHTML sink sanitized + link routing (Wave 1)
-- [ ] 05-03-PLAN.md — Notes context loader (12k whole-file budget) wired into RequestBuilder.mdContext + settings UI (Wave 2)
+- [x] 05-03-PLAN.md — Notes context loader (12k whole-file budget) wired into RequestBuilder.mdContext + settings UI (Wave 2)
 - [ ] 05-04-PLAN.md — TCC loss detection (status + black-frame cross-check) + recovery banner + deep-link/relaunch IPC (Wave 3)
 - [ ] 05-05-PLAN.md — Sender-scoped IPC: channel audience table + guarded handlers + per-class preload split (Wave 4)
 - [ ] 05-06-PLAN.md — Phase gate: full automated suite + attended five-pillar verification checkpoint (Wave 5)
