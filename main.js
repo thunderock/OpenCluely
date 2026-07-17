@@ -59,6 +59,7 @@ app.commandLine.appendSwitch("no-pings");
 const logger = require("./src/core/logger").createServiceLogger("MAIN");
 const config = require("./src/core/config");
 const FirstRunManager = require("./src/core/first-run");
+const { contextManager } = require("./src/core/context.manager");
 
 // ── Global crash guard ──
 // The speech path spawns external processes on macOS/Linux (the sox/rec/arecord
@@ -316,6 +317,20 @@ class ApplicationController {
       });
 
       sessionManager.addEvent("Application started");
+
+      // Notes/md-context (CONT-05): load the settings-configured folder of
+      // .md files ONCE at launch into a bounded string — every model call
+      // carries it via RequestBuilder.mdContext. Launch-only reload (edit
+      // notes -> restart); isolated + non-blocking like the manager starts
+      // below (a bad folder degrades to empty context, never blocks startup).
+      try {
+        const notesStatus = await contextManager.load();
+        logger.info("Notes context loaded", notesStatus);
+      } catch (e) {
+        logger.warn("Notes context load failed (continuing without notes)", {
+          error: e.message,
+        });
+      }
 
       // Local engine (PROV-05): adopt a running Ollama or start one so the app
       // is answer-ready. NEVER blocks startup — start() degrades gracefully and
@@ -812,6 +827,27 @@ class ApplicationController {
 
     ipcMain.handle("get-settings", () => {
       return this.getSettings();
+    });
+
+    // Native folder picker for the notes/md-context folder (CONT-05). Returns
+    // the chosen directory path; the settings renderer puts it into the
+    // editable path field (persistence happens via save-settings ->
+    // NOTES_FOLDER, restart-to-apply). Plain ipcMain.handle for now; 05-05
+    // converts every handler to the sender-scoped guarded form.
+    ipcMain.handle("select-notes-folder", async () => {
+      try {
+        const { dialog } = require("electron");
+        const result = await dialog.showOpenDialog({
+          properties: ["openDirectory"],
+        });
+        if (result.canceled || !result.filePaths.length) {
+          return { canceled: true };
+        }
+        return { canceled: false, path: result.filePaths[0] };
+      } catch (e) {
+        logger.warn("Notes folder picker failed", { error: e.message });
+        return { canceled: true, error: e.message };
+      }
     });
 
     // First-run onboarding status — renderer can query to know whether
@@ -2027,6 +2063,13 @@ class ApplicationController {
       model: config.get("llm.local.model"),
       curatedModels: config.get("llm.local.curatedModels"),
 
+      // Notes/md-context (CONT-05). Folder + budget come from config (.env
+      // NOTES_FOLDER, restart-to-apply); notesStatus carries the live
+      // "N of M files loaded" numbers from the launch-time load.
+      notesFolder: config.get("notes.folder") || "",
+      notesBudgetChars: config.get("notes.budgetChars"),
+      notesStatus: contextManager.getStatus(),
+
       speechAvailable: this.speechAvailable
     };
   }
@@ -2084,6 +2127,13 @@ class ApplicationController {
       }
       if (settings.model !== undefined) {
         envUpdates.LOCAL_MODEL = settings.model;
+      }
+
+      // Notes folder (CONT-05). Restart-to-apply, matching LOCAL_MODEL: the
+      // loader reads config (-> .env) once at launch, so the new folder takes
+      // effect on the next boot.
+      if (settings.notesFolder !== undefined) {
+        envUpdates.NOTES_FOLDER = settings.notesFolder;
       }
 
       const persistedKeys = this.persistEnvUpdates(envUpdates);

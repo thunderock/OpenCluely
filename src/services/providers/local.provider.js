@@ -20,6 +20,9 @@ const config = require('../../core/config');
 const { LLMProvider } = require('./llm-provider');
 const { RequestBuilder } = require('../../core/request-builder');
 const { nodeFetch } = require('../../core/local-transport');
+// Notes/md-context (CONT-05): loaded once at launch (main.js onAppReady);
+// getContext() is a cheap cached-string read, safe on every request.
+const { contextManager } = require('../../core/context.manager');
 const logger = require('../../core/logger').createServiceLogger('LOCAL');
 
 class LocalProvider extends LLMProvider {
@@ -256,7 +259,7 @@ class LocalProvider extends LLMProvider {
     const startTime = Date.now();
     this.requestCount++;
     try {
-      const neutral = this.requestBuilder.buildImageRequest(imageBuffer, mimeType, activeSkill, programmingLanguage);
+      const neutral = this.requestBuilder.buildImageRequest(imageBuffer, mimeType, activeSkill, programmingLanguage, contextManager.getContext());
       const response = await this.generateStream(neutral, { programmingLanguage }, onDelta);
       logger.logPerformance('Local image streaming', startTime, { activeSkill, requestId: this.requestCount });
       return {
@@ -284,7 +287,7 @@ class LocalProvider extends LLMProvider {
     const startTime = Date.now();
     this.requestCount++;
     try {
-      const neutral = this.requestBuilder.buildTextRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const neutral = this.requestBuilder.buildTextRequest(text, activeSkill, sessionMemory, programmingLanguage, contextManager.getContext());
       const response = await this.generateStream(neutral, { programmingLanguage }, onDelta);
       logger.logPerformance('Local text streaming', startTime, { activeSkill, requestId: this.requestCount });
       return {
@@ -310,7 +313,7 @@ class LocalProvider extends LLMProvider {
     const startTime = Date.now();
     this.requestCount++;
     try {
-      const neutral = this.requestBuilder.buildTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const neutral = this.requestBuilder.buildTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage, contextManager.getContext());
       const response = await this.generateStream(neutral, { programmingLanguage }, onDelta);
       logger.logPerformance('Local transcription streaming', startTime, { activeSkill, requestId: this.requestCount });
       return {
