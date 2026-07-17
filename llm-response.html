@@ -6,6 +6,9 @@
     <title>OpenCluely</title>
     <script src="lib/markdown.js"></script>
     <script src="lib/mathrender.js"></script>
+    <script src="./node_modules/dompurify/dist/purify.js"></script>
+    <script src="./src/core/sanitize-policy.js"></script>
+    <script src="./src/ui/sanitize.js"></script>
     <style>
         .text-white { color: white; }
         .text-gray-300 { color: #d1d5db; }
@@ -832,9 +835,9 @@
             // Clean up text content
             textContent = textContent.replace(/\n\s*\n\s*\n/g, '\n\n').trim();
 
-            // Render text content
+            // Render text content (sanitized — SEC-01: model output is untrusted)
             const textHtml = renderMarkdown(textContent);
-            document.getElementById('text-content').innerHTML = textHtml;
+            document.getElementById('text-content').innerHTML = window.sanitizeHtml(textHtml);
             if (window.renderMathInElement) window.renderMathInElement(document.getElementById('text-content'));
 
             // Render code blocks
@@ -847,12 +850,12 @@
                 codeBlocks.forEach((block, index) => {
                     const codeBlock = document.createElement('div');
                     codeBlock.className = 'code-block';
-                    codeBlock.innerHTML = `
+                    codeBlock.innerHTML = window.sanitizeHtml(`
                         <div class="code-header">${block.language.toUpperCase()}</div>
                         <div class="code-content">
                             <pre><code class="language-${block.language}">${escapeHtml(block.code)}</code></pre>
                         </div>
-                    `;
+                    `);
                     const pre = codeBlock.querySelector('pre');
                     pre.style.position = 'relative';
                     const btn = document.createElement('button');
@@ -876,10 +879,10 @@
             document.getElementById('split-layout').classList.add('hidden');
             document.getElementById('full-content').classList.remove('hidden');
 
-            // Render full markdown
+            // Render full markdown (sanitized — SEC-01: model output is untrusted)
             const html = renderMarkdown(response);
             const full = document.getElementById('full-markdown');
-            full.innerHTML = html;
+            full.innerHTML = window.sanitizeHtml(html);
             if (window.renderMathInElement) window.renderMathInElement(full);
 
             // Highlight any code if Prism is available
@@ -1036,6 +1039,19 @@
                 });
             }
         })();
+
+        // SEC-01: sanitized model-output links never navigate in-window —
+        // delegated handler routes http(s) hrefs through the validated
+        // open-external IPC (window-level will-navigate stays as backstop).
+        document.addEventListener('click', (e) => {
+            const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+            if (!a) return;
+            e.preventDefault();
+            const href = a.getAttribute('href') || '';
+            if (/^https?:\/\//i.test(href) && window.electronAPI && window.electronAPI.openExternal) {
+                window.electronAPI.openExternal(href);
+            }
+        });
     </script>
 </body>
 </html>

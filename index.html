@@ -455,6 +455,10 @@
       </div>
     </div>
 
+    <!-- SEC-01: DOMPurify UMD + the one locked policy + window.sanitizeHtml glue (order matters) -->
+    <script src="./node_modules/dompurify/dist/purify.js"></script>
+    <script src="./src/core/sanitize-policy.js"></script>
+    <script src="./src/ui/sanitize.js"></script>
     <script src="./src/ui/main-window.js"></script>
   </body>
 </html>

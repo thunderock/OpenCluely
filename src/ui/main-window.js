@@ -655,6 +655,8 @@ class MainWindowUI {
 
     // Inject the panel's spinner keyframes once. index.html doesn't ship Font
     // Awesome or a .spinner class, so the recovery UI stays self-contained.
+    // SEC-01 note: the panel shell is sanitized and the locked policy strips
+    // style="" attrs, so ALL shell styling lives here as classes instead.
     _ensureRecoveryStyles() {
         if (document.getElementById('lu-styles')) return;
         const style = document.createElement('style');
@@ -671,6 +673,18 @@ class MainWindowUI {
                 vertical-align: -1px;
                 margin-right: 6px;
             }
+            .lu-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+            .lu-warn-icon { color: #f87171; font-size: 14px; line-height: 1; }
+            .lu-title { font-size: 13px; }
+            .lu-dismiss { margin-left: auto; background: transparent; border: 0; color: rgba(255,255,255,0.6); cursor: pointer; font-size: 16px; line-height: 1; }
+            .lu-message { color: rgba(255,255,255,0.85); line-height: 1.5; margin-bottom: 12px; }
+            .lu-progress { display: none; margin-bottom: 12px; }
+            .lu-progress-track { height: 8px; background: rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden; }
+            .lu-progress-fill { height: 100%; width: 0%; background: #4ade80; border-radius: 6px; transition: width 0.3s ease; }
+            .lu-progress-status { margin-top: 6px; font-size: 11px; color: rgba(255,255,255,0.6); }
+            .lu-actions { display: flex; gap: 8px; justify-content: flex-end; }
+            .lu-primary { background: #f87171; border: 0; border-radius: 8px; color: #0a0a0a; font-weight: 600; font-size: 12px; padding: 8px 14px; cursor: pointer; }
+            .lu-close { background: transparent; border: 1px solid rgba(255,255,255,0.18); border-radius: 8px; color: rgba(255,255,255,0.85); font-size: 12px; padding: 8px 14px; cursor: pointer; }
         `;
         document.head.appendChild(style);
     }
@@ -700,24 +714,40 @@ class MainWindowUI {
             font-size: 12.5px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         `;
-        panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                <span style="color:#f87171; font-size:14px; line-height:1;">&#9888;</span>
-                <strong style="font-size:13px;">Local model unavailable</strong>
-                <button class="lu-dismiss" title="Dismiss" style="margin-left:auto; background:transparent; border:0; color:rgba(255,255,255,0.6); cursor:pointer; font-size:16px; line-height:1;">&times;</button>
+        // SEC-01: the shell goes through the one locked sanitize policy. It
+        // forbids <button> and style="" — so the shell is button-free (styling
+        // lives in _ensureRecoveryStyles classes) and ALL buttons are
+        // createElement'd AFTER assignment: status-derived strings can never
+        // become interactive elements.
+        panel.innerHTML = window.sanitizeHtml(`
+            <div class="lu-header">
+                <span class="lu-warn-icon">&#9888;</span>
+                <strong class="lu-title">Local model unavailable</strong>
             </div>
-            <div class="lu-message" style="color:rgba(255,255,255,0.85); line-height:1.5; margin-bottom:12px;"></div>
-            <div class="lu-progress" style="display:none; margin-bottom:12px;">
-                <div style="height:8px; background:rgba(255,255,255,0.08); border-radius:6px; overflow:hidden;">
-                    <div class="lu-progress-fill" style="height:100%; width:0%; background:#4ade80; border-radius:6px; transition:width 0.3s ease;"></div>
+            <div class="lu-message"></div>
+            <div class="lu-progress">
+                <div class="lu-progress-track">
+                    <div class="lu-progress-fill"></div>
                 </div>
-                <div class="lu-progress-status" style="margin-top:6px; font-size:11px; color:rgba(255,255,255,0.6);"></div>
+                <div class="lu-progress-status"></div>
             </div>
-            <div style="display:flex; gap:8px; justify-content:flex-end;">
-                <button class="lu-primary" style="background:#f87171; border:0; border-radius:8px; color:#0a0a0a; font-weight:600; font-size:12px; padding:8px 14px; cursor:pointer;"></button>
-                <button class="lu-close" style="background:transparent; border:1px solid rgba(255,255,255,0.18); border-radius:8px; color:rgba(255,255,255,0.85); font-size:12px; padding:8px 14px; cursor:pointer;">Dismiss</button>
-            </div>
-        `;
+            <div class="lu-actions"></div>
+        `);
+
+        const dismissX = document.createElement('button');
+        dismissX.className = 'lu-dismiss';
+        dismissX.title = 'Dismiss';
+        dismissX.innerHTML = '&times;';
+        panel.querySelector('.lu-header').appendChild(dismissX);
+
+        const primaryBtn = document.createElement('button');
+        primaryBtn.className = 'lu-primary';
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'lu-close';
+        closeBtn.textContent = 'Dismiss';
+        const actionsRow = panel.querySelector('.lu-actions');
+        actionsRow.appendChild(primaryBtn);
+        actionsRow.appendChild(closeBtn);
 
         panel.querySelector('.lu-message').textContent = message;
         panel.querySelector('.lu-primary').textContent = action.label;
@@ -1237,7 +1267,7 @@ class MainWindowUI {
         // Create temporary notification
         const notification = document.createElement('div');
         notification.className = 'skill-change-notification';
-        notification.innerHTML = `${arrow} ${displayName}`;
+        notification.innerHTML = window.sanitizeHtml(`${arrow} ${displayName}`); // SEC-01: skill name is a variable — sanitize
         notification.style.cssText = `
             position: fixed;
             top: 50%;
@@ -1445,7 +1475,7 @@ class MainWindowUI {
             gap: 8px;
             transition: all 0.2s ease;
         `;
-        item.innerHTML = `<i class="fas ${iconClass}"></i>${text}`;
+        item.innerHTML = window.sanitizeHtml(`<i class="fas ${iconClass}"></i>${text}`); // SEC-01: composite sink — sanitize
         item.addEventListener('mouseover', () => {
             item.style.background = 'rgba(255, 255, 255, 0.1)';
         });
