@@ -113,6 +113,9 @@ class ApplicationController {
     // events must never re-enter and double-restart the whisper-server / tap.
     this._rewarmInFlight = false;
     this._powerMonitorWired = false;
+    // Continuous capture lifecycle (CONT-04): guard against double-registering
+    // the lock/sleep pause-resume powerMonitor listeners.
+    this._captureLifecycleArmed = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
     // single spoken question can still arrive as a few fragments (mid-thought
@@ -274,6 +277,11 @@ class ApplicationController {
       // GPU/stream state.
       this._setupPowerMonitor();
 
+      // Continuous capture lifecycle (CONT-04): pause on lock/sleep, resume on
+      // unlock/wake. Armed EARLY like the wake re-warm so a lock during the
+      // slow model warmup below still pauses the loop.
+      this._registerCaptureLifecycle();
+
       // Initialize default stealth mode with terminal icon
       this.updateAppIcon("terminal");
 
@@ -416,6 +424,12 @@ class ApplicationController {
       // up (complete-first-run re-invokes it) so we never grab the mic
       // mid-setup.
       this._ensureAmbientListening("launch");
+
+      // Continuous screen capture (CONT-04): start the 2s hold-latest loop —
+      // NON-BLOCKING + guarded like ambient listening above. Skipped while the
+      // onboarding wizard is up (complete-first-run re-invokes it); a capture
+      // failure must never block startup.
+      this._ensureContinuousCapture("launch");
     } catch (error) {
       this.starting = false;
       logger.error("Application initialization failed", {
@@ -835,6 +849,9 @@ class ApplicationController {
         // interrupt setup, begin ambient listening if the engine is ready
         // (STT-03/SC3). Defers silently if the model still isn't downloaded.
         this._ensureAmbientListening("onboarding-complete");
+        // Onboarding done: start the continuous capture loop too (CONT-04) —
+        // it was skipped during the wizard for the same reason as the mic.
+        this._ensureContinuousCapture("onboarding-complete");
         return { success: true };
       } catch (e) {
         return { success: false, error: e.message };
@@ -1165,6 +1182,70 @@ class ApplicationController {
       logger.warn("Ambient listening auto-start failed (will retry on next status)", {
         error: e.message,
       });
+    }
+  }
+
+  /**
+   * Start the continuous screen-capture loop (CONT-04) — guarded + idempotent,
+   * mirroring _ensureAmbientListening. Skipped while onboarding is up (the
+   * complete-first-run handler re-invokes it); startContinuousCapture() itself
+   * is idempotent, so repeated calls are safe. NEVER blocks or throws — a
+   * capture failure must never block startup.
+   */
+  _ensureContinuousCapture(reason = "auto") {
+    try {
+      if (this.isFirstRun) {
+        logger.debug("Continuous capture deferred: onboarding in progress", { reason });
+        return; // onboarding wizard is up — complete-first-run re-invokes us
+      }
+      captureService.startContinuousCapture();
+    } catch (e) {
+      logger.warn("Continuous capture start failed (continuing without it)", {
+        error: e.message,
+      });
+    }
+  }
+
+  /**
+   * Register the continuous-capture pause/resume lifecycle (CONT-04): pause on
+   * screen lock + system sleep, resume on unlock + wake — the ONLY pause
+   * conditions this phase (battery/thermal back-off is Phase 6). Guarded so a
+   * double-register can't happen; each callback body is try/caught so a
+   * capture-service failure never crashes a powerMonitor event
+   * (degrade-never-crash).
+   */
+  _registerCaptureLifecycle() {
+    if (this._captureLifecycleArmed) {
+      return;
+    }
+    try {
+      if (!powerMonitor || typeof powerMonitor.on !== "function") {
+        return;
+      }
+      powerMonitor.on("lock-screen", () => {
+        try { captureService.pauseContinuousCapture(); } catch (e) {
+          logger.warn("Capture pause on lock-screen failed", { error: e.message });
+        }
+      });
+      powerMonitor.on("suspend", () => {
+        try { captureService.pauseContinuousCapture(); } catch (e) {
+          logger.warn("Capture pause on suspend failed", { error: e.message });
+        }
+      });
+      powerMonitor.on("unlock-screen", () => {
+        try { captureService.resumeContinuousCapture(); } catch (e) {
+          logger.warn("Capture resume on unlock-screen failed", { error: e.message });
+        }
+      });
+      powerMonitor.on("resume", () => {
+        try { captureService.resumeContinuousCapture(); } catch (e) {
+          logger.warn("Capture resume on wake failed", { error: e.message });
+        }
+      });
+      this._captureLifecycleArmed = true;
+      logger.debug("Continuous capture lock/sleep lifecycle registered");
+    } catch (e) {
+      logger.warn("Failed to register capture lifecycle handlers", { error: e.message });
     }
   }
 
@@ -1861,6 +1942,12 @@ class ApplicationController {
     try {
       const stoppingTap = this.getSystemAudioTapManager().stop();
       if (stoppingTap && typeof stoppingTap.catch === "function") stoppingTap.catch(() => {});
+    } catch (_) { /* best effort */ }
+
+    // Stop the continuous capture loop (CONT-04). Synchronous clearInterval —
+    // fire-and-forget, best effort.
+    try {
+      captureService.stopContinuousCapture();
     } catch (_) { /* best effort */ }
 
     const sessionStats = sessionManager.getMemoryUsage();
