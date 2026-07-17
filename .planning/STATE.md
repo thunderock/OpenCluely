@@ -26,6 +26,8 @@ See: .planning/PROJECT.md (updated 2026-07-13)
 Phase: 05 (continuous-capture-notes-hardening) — EXECUTING
 Plan: 6 of 6
 
+Last activity: 2026-07-17 - Completed quick task 260716-wyo: removed coding-language UI everywhere; programming prompt now defaults to Python unless screen/audio implies another language (25ed5f7/e034ad7/14f4c91, docs 59becb7; recovered from executor death mid-Task-2; 188/188 tests, lint 0). Phase 5 wave 5 (05-06 attended gate) still pending.
+
 ## Performance Metrics
 
 **Velocity:**
@@ -151,6 +153,12 @@ Research flags to resolve during planning (not blockers to starting):
 Deferred (captured, not blocking):
 
 - GEN-01 residual copy (from 03-02): copy-only `'dsa'` skill defaults/labels/emoji maps still in `src/managers/session.manager.js:11`, `src/ui/main-window.js` (13/28/294/522/761/874), `src/ui/chat-window.js:301`, `src/services/providers/gemini.provider.js` (1166/1190 + comment 271 — removed anyway at PROV-07/03-08). Not functional; part of the in-app-string reposition stream slated for README P8 / website WEB-01 P9.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260716-wyo | remove coding-language UI everywhere; programming prompt defaults to Python unless screen/audio implies another language | 2026-07-17 | 59becb7 (25ed5f7/e034ad7/14f4c91) | [260716-wyo-remove-coding-language-ui-everywhere-pro](./quick/260716-wyo-remove-coding-language-ui-everywhere-pro/) |
 
 ## Session Continuity
 
