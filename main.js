@@ -100,8 +100,6 @@ class ApplicationController {
     this.isReady = false;
     this.starting = false;
     this.activeSkill = "general";
-  // Default to C++ so language is enforced from first run
-  this.codingLanguage = "cpp";
     this.speechAvailable = false;
 
     // Ambient listening (STT-03/SC3): the audio stream stays open launch→quit.
@@ -1674,9 +1672,6 @@ class ApplicationController {
       // Use image directly with LLM and active skill; do not send chat messages here
       const sessionHistory = sessionManager.getOptimizedHistory();
 
-      const skillsRequiringProgrammingLanguage = ['programming'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-
       this._responseSeq = (this._responseSeq || 0) + 1;
       const messageId = `img-${Date.now()}-${this._responseSeq}`;
       windowManager.broadcastToAllWindows("transcription-llm-response-start", {
@@ -1689,7 +1684,6 @@ class ApplicationController {
         capture.mimeType || 'image/png',
         this.activeSkill,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
           windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
             messageId,
@@ -1739,10 +1733,6 @@ class ApplicationController {
       // Add user input to session memory
       sessionManager.addUserInput(text, 'llm_input');
 
-      // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['programming'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-
       this._responseSeq = (this._responseSeq || 0) + 1;
       const messageId = `chat-${Date.now()}-${this._responseSeq}`;
       windowManager.broadcastToAllWindows("transcription-llm-response-start", {
@@ -1755,7 +1745,6 @@ class ApplicationController {
         text,
         this.activeSkill,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
           windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
             messageId,
@@ -1768,7 +1757,6 @@ class ApplicationController {
       logger.info("LLM processing completed, showing response", {
         responseLength: llmResult.response.length,
         skill: this.activeSkill,
-        programmingLanguage: needsProgrammingLanguage ? this.codingLanguage : 'not applicable',
         processingTime: llmResult.metadata.processingTime,
         responsePreview: llmResult.response.substring(0, 200) + "...",
       });
@@ -1907,10 +1895,6 @@ class ApplicationController {
         textPreview: cleanText.substring(0, 100) + "..."
       });
 
-      // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['programming'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-
       // Stream the answer so it renders progressively in the chat + overlay.
       // A unique messageId ties the start/chunk/final events to one bubble so
       // the UI never duplicates or interleaves concurrent responses.
@@ -1928,7 +1912,6 @@ class ApplicationController {
         cleanText,
         this.activeSkill,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
           windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
             messageId,
@@ -1962,7 +1945,6 @@ class ApplicationController {
       logger.info("Transcription LLM response completed", {
         responseLength: llmResult.response.length,
         skill: this.activeSkill,
-        programmingLanguage: needsProgrammingLanguage ? this.codingLanguage : 'not applicable',
         processingTime: llmResult.metadata.processingTime
       });
 
@@ -2195,7 +2177,6 @@ class ApplicationController {
     // using. Empty strings are returned rather than skipped so the UI can
     // distinguish "unset" from "stale value from a previous load".
     return {
-      codingLanguage: this.codingLanguage || "cpp",
       activeSkill: this.activeSkill || "general",
       appIcon: this.appIcon || "terminal",
       selectedIcon: this.appIcon || "terminal",
@@ -2228,12 +2209,6 @@ class ApplicationController {
   saveSettings(settings) {
     try {
       // ── In-memory updates + window broadcasts ──
-      if (settings.codingLanguage) {
-        this.codingLanguage = settings.codingLanguage;
-        windowManager.broadcastToAllWindows("coding-language-changed", {
-          language: settings.codingLanguage,
-        });
-      }
       if (settings.activeSkill) {
         this.activeSkill = settings.activeSkill;
         windowManager.broadcastToAllWindows("skill-updated", {
