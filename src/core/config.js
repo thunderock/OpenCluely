@@ -59,6 +59,15 @@ class ConfigManager {
         }
       },
 
+      notes: {
+        // Notes/md-context folder (CONT-05). Loaded ONCE at launch by
+        // ContextManager (launch-only reload — restart to apply); the budget
+        // bounds the FINAL assembled string that rides every model call
+        // (12k chars pre-validated by the 03-07 prefill smoke).
+        folder: process.env.NOTES_FOLDER || '',
+        budgetChars: parseInt(process.env.NOTES_BUDGET_CHARS, 10) || 12000
+      },
+
       capture: {
         // Continuous screen-capture loop (CONT-04). The loop holds the newest
         // deduped frame for the Phase-6 pause orchestrator to pull; an idle
