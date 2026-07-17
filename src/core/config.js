@@ -59,6 +59,19 @@ class ConfigManager {
         }
       },
 
+      capture: {
+        // Continuous screen-capture loop (CONT-04). The loop holds the newest
+        // deduped frame for the Phase-6 pause orchestrator to pull; an idle
+        // screen costs only a perceptual hash (no encode).
+        intervalMs: parseInt(process.env.CAPTURE_INTERVAL_MS, 10) || 2000,
+        // Downscale target: the long edge of the captured frame (capture-at-
+        // target via desktopCapturer thumbnailSize — never full-res + resize).
+        longEdgePx: parseInt(process.env.CAPTURE_LONG_EDGE_PX, 10) || 1280,
+        // Max hamming distance (bits, of 256) treated as "unchanged frame".
+        dedupThreshold: parseInt(process.env.CAPTURE_DEDUP_THRESHOLD, 10) || 10,
+        jpegQuality: parseInt(process.env.CAPTURE_JPEG_QUALITY, 10) || 80
+      },
+
       speech: {
         // Resident whisper.cpp whisper-server engine (STT-01) is the SOLE speech
         // config — the former cloud STT provider + its config block were removed,
