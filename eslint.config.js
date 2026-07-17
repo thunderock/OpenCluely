@@ -54,6 +54,19 @@ module.exports = [
     rules: leanRules,
   },
 
+  // Block 1b — dual-load modules: CJS require (main/tests) AND renderer script
+  // tag (lib/markdown.js expose pattern). Adds browser globals ON TOP of
+  // Block 1's node globals so the `typeof window` guard body lints clean —
+  // scoped to exactly these files, never repo-wide.
+  {
+    files: [
+      'src/core/sanitize-policy.js',
+    ],
+    languageOptions: {
+      globals: { ...globals.browser },
+    },
+  },
+
   // Block 2 — renderer/browser layer (UI + onboarding + hand-written math render).
   {
     files: [
