@@ -490,6 +490,41 @@
 
             <div class="settings-section">
                 <div class="settings-section-title">
+                    <i class="fas fa-folder-open"></i>
+                    Notes Context
+                </div>
+                <div class="settings-section-content">
+                    <div class="settings-item">
+                        <div class="settings-stack">
+                            <div>
+                                <div class="settings-item-label">Notes folder</div>
+                                <div class="settings-item-description">Top-level .md files in this folder are loaded as standing context for every answer.</div>
+                            </div>
+                            <input type="text" class="input-field" id="notesFolder" placeholder="Folder of .md notes (optional)" style="max-width: 100%;">
+                        </div>
+                    </div>
+
+                    <div class="settings-item">
+                        <div>
+                            <div class="settings-item-label">Choose folder</div>
+                            <div class="settings-item-description">Pick with the native dialog, or edit the path above directly</div>
+                        </div>
+                        <button class="btn" id="notesBrowse">
+                            <i class="fas fa-folder-open"></i>
+                            Browse…
+                        </button>
+                    </div>
+
+                    <div id="notesStatus" class="settings-note">No notes folder configured</div>
+
+                    <div class="settings-note">
+                        Loaded once at launch — restart the app to apply changes.
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <div class="settings-section-title">
                     <i class="fas fa-window-maximize"></i>
                     Window Settings
                 </div>

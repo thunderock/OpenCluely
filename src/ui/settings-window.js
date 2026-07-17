@@ -27,6 +27,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const whisperRepairBtn = document.getElementById('whisperRepairBtn');
     const whisperStatusLog = document.getElementById('whisperStatusLog');
 
+    // Notes/md-context folder (CONT-05): editable path + native picker +
+    // "N of M files loaded" status. Loaded once at launch (restart-to-apply).
+    const notesFolder = document.getElementById('notesFolder');
+    const notesBrowse = document.getElementById('notesBrowse');
+    const notesStatus = document.getElementById('notesStatus');
+
     // Curated list arrives from getSettings(); this fallback lets us classify a
     // saved model as curated-vs-advanced even before settings load.
     const DEFAULT_CURATED = ['qwen3-vl:8b', 'qwen3-vl:30b', 'gemma3:4b', 'gemma3:12b'];
@@ -125,6 +131,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (localModelAdvanced) localModelAdvanced.style.display = 'none';
             }
         }
+        // Notes context (CONT-05): editable path + launch-time load status.
+        if (notesFolder) notesFolder.value = settings.notesFolder || '';
+        renderNotesStatus(settings.notesStatus);
+
         updateLocalModelFieldStates();
         refreshModelStatus();
         refreshWhisperStatus();
@@ -164,6 +174,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? (localModelAdvanced ? localModelAdvanced.value : '')
                 : localModel.value;
         }
+
+        // Notes context folder (CONT-05) — persisted to .env, restart-to-apply.
+        if (notesFolder) settings.notesFolder = notesFolder.value.trim();
 
         window.api.send('save-settings', settings);
     };
@@ -217,6 +230,20 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
             modelStatus.textContent = 'Status unavailable: ' + (e.message || e);
         }
+    };
+
+    // ── Notes/md-context folder (CONT-05) ──
+    // Status comes from getSettings().notesStatus — the launch-time load's
+    // { folder, loadedCount, totalCount, chars, budget } — so the line shows
+    // what the RUNNING app actually loaded ("N of M files loaded").
+    const renderNotesStatus = (s) => {
+        if (!notesStatus) return;
+        if (!s || !s.folder) {
+            notesStatus.textContent = 'No notes folder configured';
+            return;
+        }
+        notesStatus.textContent =
+            `Loaded ${s.loadedCount} of ${s.totalCount} files (${s.chars} of ${s.budget} chars)`;
     };
 
     const appendModelLog = (line) => {
@@ -276,7 +303,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Add event listeners for all inputs
     const inputs = [
-        windowGapInput
+        windowGapInput,
+        notesFolder
     ];
 
     inputs.forEach(input => {
@@ -335,6 +363,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (localModelAdvanced) {
         localModelAdvanced.addEventListener('change', saveSettings);
+    }
+
+    // Notes folder native picker (CONT-05). The chosen path lands in the
+    // editable field and is saved immediately; the loader reads it on the
+    // NEXT launch (launch-only reload — the status line updates after restart).
+    if (notesBrowse) {
+        notesBrowse.addEventListener('click', async () => {
+            if (!window.electronAPI || !window.electronAPI.selectNotesFolder) return;
+            try {
+                const r = await window.electronAPI.selectNotesFolder();
+                if (!r || r.canceled) return;
+                if (notesFolder) notesFolder.value = r.path;
+                saveSettings();
+            } catch (e) {
+                console.error('Notes folder picker failed:', e);
+            }
+        });
     }
 
     // Test connection against the selected provider (03-04 bridge).
