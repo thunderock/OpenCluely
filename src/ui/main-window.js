@@ -496,6 +496,16 @@ class MainWindowUI {
                 window.electronAPI.onLlmError((event, data) => this.handleLLMError(data || {}));
             }
 
+            // TCC permission recovery (SEC-02): the main-process monitor
+            // broadcasts transition-only { screen:'ok'|'lost', mic:'ok'|'lost',
+            // reason } states — each 'lost' kind raises its inline banner
+            // (guided re-grant + relaunch), each 'ok' dismisses it.
+            if (window.electronAPI.onPermissionStatus) {
+                window.electronAPI.onPermissionStatus((_event, state) => {
+                    this.handlePermissionStatus(state || {});
+                });
+            }
+
             // Global keyboard shortcuts
             document.addEventListener('keydown', (e) => {
                 if (e.altKey && e.key === 'r' && this.isInteractive) {
@@ -866,6 +876,156 @@ class MainWindowUI {
         this._localUnavailablePanel = null;
         // Shrink the window back to the compact command bar.
         this.resizeWindowToContent();
+    }
+
+    // ── TCC permission-loss banners (SEC-02) ─────────────────────────────
+    // Inline, dismissible, NEVER modal — the showLocalUnavailable idiom. One
+    // banner element per kind (perm-banner-screen / perm-banner-mic); re-show
+    // replaces, dismiss removes, the app stays fully usable behind it.
+
+    handlePermissionStatus(state) {
+        if (state.screen === 'lost') this.showPermissionBanner('screen');
+        else this.hidePermissionBanner('screen');
+        if (state.mic === 'lost') this.showPermissionBanner('mic');
+        else this.hidePermissionBanner('mic');
+    }
+
+    // Fixed stack under the command bar so screen + mic banners never overlap.
+    _ensurePermBannerStack() {
+        let stack = document.getElementById('perm-banner-stack');
+        if (!stack) {
+            stack = document.createElement('div');
+            stack.id = 'perm-banner-stack';
+            stack.style.cssText = `
+                position: fixed;
+                top: 42px;
+                left: 50%;
+                transform: translateX(-50%);
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                width: 400px;
+                max-width: calc(100vw - 24px);
+                z-index: 1002;
+                -webkit-app-region: no-drag;
+            `;
+            document.body.appendChild(stack);
+        }
+        return stack;
+    }
+
+    showPermissionBanner(kind) {
+        const variants = {
+            screen: {
+                id: 'perm-banner-screen',
+                title: 'Screen access lost',
+                body: "OpenCluely can't see your screen — macOS revoked Screen Recording (this happens after updates). Re-grant it, then relaunch.",
+                openSettings: () => window.electronAPI.openPrivacySettings('screen'),
+                relaunch: true
+            },
+            mic: {
+                id: 'perm-banner-mic',
+                title: 'Microphone access lost',
+                body: 'Voice input is off — macOS revoked Microphone access. Re-grant it to restore listening.',
+                openSettings: () => window.electronAPI.openPrivacySettings('microphone'),
+                relaunch: false
+            }
+        };
+        const variant = variants[kind];
+        if (!variant) return;
+
+        this.hidePermissionBanner(kind); // re-show replaces
+        this._ensureRecoveryStyles(); // reuse the lu-* classes (SEC-01: no style="" attrs)
+
+        const banner = document.createElement('div');
+        banner.id = variant.id;
+        banner.style.cssText = `
+            background: linear-gradient(135deg, rgba(20, 20, 20, 0.92) 0%, rgba(10, 10, 10, 0.88) 100%);
+            backdrop-filter: blur(18px);
+            border: 1px solid rgba(248, 113, 113, 0.35);
+            border-radius: 10px;
+            color: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+            padding: 14px 16px;
+            font-size: 12.5px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        `;
+        // SEC-01: the static shell goes through the one locked sanitize policy
+        // (which strips <button> + style=""), so the shell is button-free and
+        // every action button is createElement'd AFTER assignment.
+        banner.innerHTML = window.sanitizeHtml(`
+            <div class="lu-header">
+                <span class="lu-warn-icon">&#9888;</span>
+                <strong class="lu-title"></strong>
+            </div>
+            <div class="lu-message"></div>
+            <div class="lu-actions"></div>
+        `);
+        banner.querySelector('.lu-title').textContent = variant.title;
+        banner.querySelector('.lu-message').textContent = variant.body;
+
+        const dismissX = document.createElement('button');
+        dismissX.className = 'lu-dismiss';
+        dismissX.title = 'Dismiss';
+        dismissX.innerHTML = '&times;';
+        dismissX.addEventListener('click', () => this.hidePermissionBanner(kind));
+        banner.querySelector('.lu-header').appendChild(dismissX);
+
+        const actionsRow = banner.querySelector('.lu-actions');
+
+        const settingsBtn = document.createElement('button');
+        settingsBtn.className = 'lu-primary';
+        settingsBtn.textContent = 'Open System Settings';
+        settingsBtn.addEventListener('click', () => {
+            if (window.electronAPI && window.electronAPI.openPrivacySettings) {
+                Promise.resolve(variant.openSettings()).catch(() => { /* main logs failures */ });
+            }
+        });
+        actionsRow.appendChild(settingsBtn);
+
+        if (variant.relaunch) {
+            // Screen Recording grants only take effect in a NEW process.
+            const relaunchBtn = document.createElement('button');
+            relaunchBtn.className = 'lu-close';
+            relaunchBtn.textContent = 'Relaunch app';
+            relaunchBtn.addEventListener('click', () => {
+                if (window.electronAPI && window.electronAPI.relaunchApp) {
+                    Promise.resolve(window.electronAPI.relaunchApp()).catch(() => { /* ignore */ });
+                }
+            });
+            actionsRow.appendChild(relaunchBtn);
+        }
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'lu-close';
+        closeBtn.textContent = 'Dismiss';
+        closeBtn.addEventListener('click', () => this.hidePermissionBanner(kind));
+        actionsRow.appendChild(closeBtn);
+
+        this._ensurePermBannerStack().appendChild(banner);
+        this._resizeForPanel(banner);
+
+        logger.info('Permission-loss banner shown', {
+            component: 'MainWindowUI',
+            kind
+        });
+    }
+
+    hidePermissionBanner(kind) {
+        const id = kind === 'screen' ? 'perm-banner-screen' : 'perm-banner-mic';
+        const banner = document.getElementById(id);
+        if (!banner) return; // cheap no-op on every 'ok' broadcast
+        if (banner.parentNode) banner.parentNode.removeChild(banner);
+        const stack = document.getElementById('perm-banner-stack');
+        if (stack && stack.childElementCount === 0) {
+            if (stack.parentNode) stack.parentNode.removeChild(stack);
+            // Shrink back only when nothing else needs the space.
+            if (!this._localUnavailablePanel) this.resizeWindowToContent();
+        }
+        logger.info('Permission-loss banner dismissed', {
+            component: 'MainWindowUI',
+            kind
+        });
     }
 
     setupKeyboardShortcuts() {
