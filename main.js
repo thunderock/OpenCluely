@@ -1,6 +1,6 @@
 const path = require("path");
 const fs = require("fs");
-const { app, BrowserWindow, globalShortcut, session, ipcMain, powerMonitor } = require("electron");
+const { app, BrowserWindow, globalShortcut, session, ipcMain, powerMonitor, systemPreferences } = require("electron");
 const { upsertEnvContent } = require("./src/core/env-file");
 
 // ── Resolve a stable .env location ──
@@ -117,6 +117,10 @@ class ApplicationController {
     // Continuous capture lifecycle (CONT-04): guard against double-registering
     // the lock/sleep pause-resume powerMonitor listeners.
     this._captureLifecycleArmed = false;
+    // TCC permission-loss monitor (SEC-02): built in onAppReady (darwin-gated
+    // by the factory); null until then so early event handlers can `?.` it.
+    this.tccMonitor = null;
+    this._tccMonitorArmed = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
     // single spoken question can still arrive as a few fragments (mid-thought
@@ -283,6 +287,13 @@ class ApplicationController {
       // slow model warmup below still pauses the loop.
       this._registerCaptureLifecycle();
 
+      // TCC permission-loss monitor (SEC-02): fuse the capture loop's
+      // black-frame signal with getMediaAccessStatus (cross-checked, both
+      // required) + the speech-path failure signal into transition-only
+      // permission-status broadcasts. Event-driven re-checks only — no
+      // polling timer. Armed EARLY so frame stats from the first tick land.
+      this._registerTccMonitor();
+
       // Initialize default stealth mode with terminal icon
       this.updateAppIcon("terminal");
 
@@ -445,6 +456,16 @@ class ApplicationController {
       // onboarding wizard is up (complete-first-run re-invokes it); a capture
       // failure must never block startup.
       this._ensureContinuousCapture("launch");
+
+      // TCC startup re-check (SEC-02): one event-driven status pass now that
+      // everything is armed. Status alone never banners the screen (the locked
+      // cross-check needs the black-frame signal too) — a lone non-granted
+      // status is warn-logged via the disagreement seam instead.
+      try {
+        this.tccMonitor?.checkNow("startup");
+      } catch (e) {
+        logger.warn("TCC startup check failed", { error: e.message });
+      }
     } catch (error) {
       this.starting = false;
       logger.error("Application initialization failed", {
@@ -509,6 +530,9 @@ class ApplicationController {
 
   setupServiceEventHandlers() {
     speechService.on("recording-started", () => {
+      // Mic stream (re)started successfully — clear the sticky SEC-02
+      // mic-failure flag so the voice banner dismisses on recovery.
+      try { this.tccMonitor?.recordMicRecovered(); } catch (_) { /* ignore */ }
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("recording-started");
       });
@@ -556,6 +580,10 @@ class ApplicationController {
     speechService.on("error", (error) => {
       // In error, still compute availability
       this.speechAvailable = speechService.isAvailable ? speechService.isAvailable() : false;
+      // Mic-loss signal (SEC-02): a speech failure is ONE pillar of the mic
+      // cross-check — the banner still requires mic status !== 'granted'
+      // (a failure with a granted mic is warn-logged as a disagreement).
+      try { this.tccMonitor?.recordMicFailure(); } catch (_) { /* ignore */ }
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("speech-error", { error, available: this.speechAvailable });
       });
@@ -918,6 +946,41 @@ class ApplicationController {
       } catch (e) {
         return { success: false, error: e.message };
       }
+    });
+
+    // SEC-02 guided recovery: deep-link to the EXACT System Settings privacy
+    // pane. ENUM ONLY — the renderer never passes a URL, and the http(s)-only
+    // `open-external` handler above is deliberately NOT loosened for
+    // x-apple.systempreferences URLs (the enum→URL mapping lives here in MAIN).
+    ipcMain.handle("open-privacy-settings", async (_event, kind) => {
+      const urls = {
+        screen: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        microphone: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+      };
+      const url = urls[kind];
+      if (!url) return { ok: false, error: "Invalid kind" };
+      const { shell } = require("electron");
+      try {
+        await shell.openExternal(url);
+        return { ok: true };
+      } catch (e) {
+        // Pane anchors can drift across macOS versions — fall back to the
+        // Privacy & Security root before giving up.
+        try {
+          await shell.openExternal("x-apple.systempreferences:com.apple.preference.security");
+          return { ok: true, fallback: true };
+        } catch (e2) {
+          logger.warn("Failed to open privacy settings", { kind, error: e2.message });
+          return { ok: false, error: e2.message };
+        }
+      }
+    });
+
+    // SEC-02: Screen Recording grants only take effect in a NEW process —
+    // the recovery banner offers this one-click relaunch.
+    ipcMain.handle("relaunch-app", () => {
+      app.relaunch();
+      app.exit(0);
     });
 
     // Download the ggml voice model via the 04-02 downloader (resumable HTTP
@@ -1286,6 +1349,60 @@ class ApplicationController {
   }
 
   /**
+   * Build + wire the TCC permission-loss monitor (SEC-02). The pure state
+   * machine (src/core/tcc-monitor.js) fuses the capture loop's black-frame
+   * signal with systemPreferences.getMediaAccessStatus per the LOCKED
+   * cross-check (banner only when BOTH agree) and emits transition-only
+   * state changes, which broadcast as `permission-status` to the overlay
+   * banner. The factory itself is inert off-darwin. Signals wired here:
+   * capture frame stats (05-01 seam) + browser-window-focus; startup and
+   * powerMonitor-resume checks are invoked from their own sites. Guarded
+   * against double-registration; degrade-never-crash.
+   */
+  _registerTccMonitor() {
+    if (this._tccMonitorArmed) {
+      return;
+    }
+    try {
+      const { createTccMonitor } = require("./src/core/tcc-monitor");
+      this.tccMonitor = createTccMonitor({
+        getScreenStatus: () => {
+          try { return systemPreferences.getMediaAccessStatus("screen"); } catch (_) { return "unknown"; }
+        },
+        getMicStatus: () => {
+          try { return systemPreferences.getMediaAccessStatus("microphone"); } catch (_) { return "unknown"; }
+        },
+        onStateChange: (state) => {
+          logger.warn("Permission state changed", state);
+          windowManager.broadcastToAllWindows("permission-status", state);
+        },
+        onDisagreement: (d) => logger.warn("Permission signal disagreement", d),
+      });
+      // Capture-loop signal (the 05-01 seam): every captured tick feeds the
+      // black-frame side of the cross-check.
+      captureService.setFrameStatsListener((stats) => {
+        try {
+          this.tccMonitor.recordFrameStats(stats);
+        } catch (e) {
+          logger.warn("TCC frame-stats ingest failed", { error: e.message });
+        }
+      });
+      // Focus regain — one of the LOCKED event-driven re-check triggers.
+      app.on("browser-window-focus", () => {
+        try {
+          this.tccMonitor?.checkNow("focus");
+        } catch (e) {
+          logger.warn("TCC focus re-check failed", { error: e.message });
+        }
+      });
+      this._tccMonitorArmed = true;
+      logger.debug("TCC permission monitor registered");
+    } catch (e) {
+      logger.warn("Failed to register TCC permission monitor", { error: e.message });
+    }
+  }
+
+  /**
    * Register the sleep/wake re-warm (openwhispr #766: sleep evicts the local
    * GPU/stream state — the whisper-server can die and the mic/tap streams go
    * stale on resume). powerMonitor is only available after app-ready, so this
@@ -1304,6 +1421,14 @@ class ApplicationController {
         this.onWakeFromSleep().catch((e) =>
           logger.warn("onWakeFromSleep threw (ignored)", { error: e && e.message }),
         );
+        // TCC re-check on wake (SEC-02): sleep/update cycles are exactly when
+        // grants get silently revoked. Alongside the re-warm, NOT inside it
+        // (wake-rewarm.js internals stay untouched).
+        try {
+          this.tccMonitor?.checkNow("resume");
+        } catch (e) {
+          logger.warn("TCC resume re-check failed", { error: e && e.message });
+        }
       });
       this._powerMonitorWired = true;
       logger.debug("powerMonitor resume handler registered");
