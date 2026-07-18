@@ -112,7 +112,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] 05-03-PLAN.md — Notes context loader (12k whole-file budget) wired into RequestBuilder.mdContext + settings UI (Wave 2)
 - [x] 05-04-PLAN.md — TCC loss detection (status + black-frame cross-check) + recovery banner + deep-link/relaunch IPC (Wave 3)
 - [x] 05-05-PLAN.md — Sender-scoped IPC: channel audience table + guarded handlers + per-class preload split (Wave 4)
-- [ ] 05-06-PLAN.md — Phase gate: full automated suite + attended five-pillar verification checkpoint (Wave 5)
+- [x] 05-06-PLAN.md — Phase gate: full automated suite + attended five-pillar verification checkpoint (Wave 5)
 
 ### Phase 6: Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI
 **Goal**: The core value — after each natural pause, a relevant answer streams into the stealth overlay, generated locally from screen + speech + notes, surfaced only when actually answerable, with the trust affordances that make always-on acceptable.
