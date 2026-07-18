@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Provider Seam — Wrap Gemini Verbatim** - `LLMProvider` abstraction + `RequestBuilder`; app still works on Gemini, call-sites unchanged
 - [x] **Phase 3: Local Engine + Cloud Removal** - Local multimodal model as the primary/default path; Gemini removed last, after Local is proven (Azure is STT-only → removed in Phase 4 with the STT replacement) (completed 2026-07-16)
 - [x] **Phase 4: Continuous Hearing — Resident STT + Ambient Listening** - Resident whisper.cpp continuously transcribes mic + macOS system audio from launch to quit (completed 2026-07-16; system-audio capture verification + attended real-world validation deferred to Phase 8 by human decision)
-- [ ] **Phase 5: Continuous Capture, Notes & Hardening** - Throttled/deduped screen capture + bounded `.md` context, shipped with output sanitization, TCC recovery, and IPC scoping
+- [x] **Phase 5: Continuous Capture, Notes & Hardening** - Throttled/deduped screen capture + bounded `.md` context, shipped with output sanitization, TCC recovery, and IPC scoping (completed 2026-07-17; automated gate green + attended five-pillar verification human-approved; verification passed 24/24)
 - [ ] **Phase 6: Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI** - After each pause, a relevant streamed answer appears; relevance gate + listening indicator + kill switch
 - [ ] **Phase 7: CLI Backup Providers — Claude / Codex** - On-demand escalation + auto-fallback to Claude/Codex CLI, reusing terminal auth, never on the per-pause path
 - [ ] **Phase 8: Packaging & Release — macOS DMG CI + Cleanup** - Unsigned universal macOS DMG in CI, `asarUnpack` for helpers, `xattr` docs, dead-code + license cleanup
@@ -170,7 +170,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. Provider Seam — Wrap Gemini Verbatim | 3/3 | Complete | 2026-07-14 |
 | 3. Local Engine + Cloud Removal | 8/8 | Complete    | 2026-07-16 |
 | 4. Continuous Hearing — Resident STT + Ambient Listening | 9/9 | Complete | 2026-07-16 |
-| 5. Continuous Capture, Notes & Hardening | 0/TBD | Not started | - |
+| 5. Continuous Capture, Notes & Hardening | 6/6 | Complete | 2026-07-17 |
 | 6. Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI | 0/TBD | Not started | - |
 | 7. CLI Backup Providers — Claude / Codex | 0/TBD | Not started | - |
 | 8. Packaging & Release — macOS DMG CI + Cleanup | 0/TBD | Not started | - |
