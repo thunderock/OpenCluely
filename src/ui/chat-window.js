@@ -359,9 +359,10 @@ class ChatWindowUI {
         const textDiv = document.createElement('div');
         textDiv.className = 'message-text';
         
-        // Format assistant messages as markdown
+        // Format assistant messages as markdown (SEC-01: defensive sanitize —
+        // dead code today, but if any context ever loads it the sink is covered)
         if (type === 'assistant') {
-            textDiv.innerHTML = this.formatMarkdown(text);
+            textDiv.innerHTML = (window.sanitizeHtml ? window.sanitizeHtml(this.formatMarkdown(text)) : this.formatMarkdown(text));
         } else {
             textDiv.textContent = text;
         }
@@ -478,10 +479,12 @@ class ChatWindowUI {
         textDiv.className = 'message-text';
         const escapedLang = (language || 'text').toUpperCase();
         const escapedCode = this.escapeHtmlForSnippet(code || '');
-        textDiv.innerHTML = `
+        // SEC-01: defensive sanitize (dead code today — see addMessage note)
+        const snippetHtml = `
             <div style="font-size:12px;color:rgba(255,255,255,0.85);margin-bottom:6px;">Snippet: ${escapedLang}</div>
             <pre><code>${escapedCode}</code></pre>
         `;
+        textDiv.innerHTML = (window.sanitizeHtml ? window.sanitizeHtml(snippetHtml) : snippetHtml);
         messageDiv.appendChild(timeDiv);
         messageDiv.appendChild(textDiv);
         this.elements.chatMessages.appendChild(messageDiv);

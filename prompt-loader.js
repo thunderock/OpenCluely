@@ -10,8 +10,6 @@ class PromptLoader {
     this.prompts = new Map();
     this.promptsLoaded = false;
     this.skillPromptSent = new Set();
-    // Skills that take a programming-language injection (see skill-normalizer).
-    this.skillsRequiringProgrammingLanguage = [...skillNormalizer.SKILLS_REQUIRING_PROGRAMMING_LANGUAGE];
   }
 
   /**
@@ -49,40 +47,23 @@ class PromptLoader {
   }
 
   /**
-   * Get the system prompt for a specific skill with optional programming language injection
+   * Get the system prompt for a specific skill
    * @param {string} skillName - The name of the skill
-   * @param {string|null} programmingLanguage - Optional programming language to inject
    * @returns {string|null} The system prompt content or null if not found
    */
-  getSkillPrompt(skillName, programmingLanguage = null) {
+  getSkillPrompt(skillName) {
     if (!this.promptsLoaded) {
       this.loadPrompts();
     }
 
     const normalizedSkillName = this.normalizeSkillName(skillName);
-    let promptContent = this.prompts.get(normalizedSkillName);
-    
+    const promptContent = this.prompts.get(normalizedSkillName);
+
     if (!promptContent) {
       return null;
     }
 
-    // Inject programming language if provided and skill requires it
-    if (programmingLanguage && this.skillsRequiringProgrammingLanguage.includes(normalizedSkillName)) {
-      promptContent = this.injectProgrammingLanguage(promptContent, programmingLanguage, normalizedSkillName);
-    }
-
     return promptContent;
-  }
-
-  /**
-   * Inject programming language context into skill prompts
-   * @param {string} promptContent - Original prompt content
-   * @param {string} programmingLanguage - Programming language to inject
-   * @param {string} skillName - Normalized skill name
-   * @returns {string} Modified prompt with programming language context
-   */
-  injectProgrammingLanguage(promptContent, programmingLanguage, skillName) {
-    return skillNormalizer.injectProgrammingLanguage(promptContent, programmingLanguage, skillName);
   }
 
   /**
@@ -125,13 +106,12 @@ class PromptLoader {
    * @param {string} skillName - The active skill
    * @param {string} userMessage - The user's message/query
    * @param {Array} storedMemory - Current stored memory
-   * @param {string|null} programmingLanguage - Optional programming language
    * @returns {Object} Separated components for manual request building
    */
-  getRequestComponents(skillName, userMessage, storedMemory, programmingLanguage = null) {
+  getRequestComponents(skillName, userMessage, storedMemory) {
     const normalizedSkillName = this.normalizeSkillName(skillName);
     const shouldUseModelMemory = this.shouldSendAsModelMemory(skillName, storedMemory);
-    const skillPrompt = this.getSkillPrompt(normalizedSkillName, programmingLanguage);
+    const skillPrompt = this.getSkillPrompt(normalizedSkillName);
 
     return {
       skillName: normalizedSkillName,
@@ -140,9 +120,7 @@ class PromptLoader {
       shouldUseModelMemory,
       isFirstTime: this.isFirstTimeInteraction(storedMemory),
       modelMemory: shouldUseModelMemory && skillPrompt ? skillPrompt : null,
-      messageContent: userMessage,
-      programmingLanguage,
-      requiresProgrammingLanguage: this.skillsRequiringProgrammingLanguage.includes(normalizedSkillName)
+      messageContent: userMessage
     };
   }
 
@@ -153,10 +131,9 @@ class PromptLoader {
    * @param {boolean} wasModelMemoryUsed - Whether model memory was used
    * @param {string} userMessage - The user message
    * @param {string} aiResponse - The AI response
-   * @param {string|null} programmingLanguage - Programming language used
    * @returns {Array} Updated stored memory
    */
-  updateStoredMemory(storedMemory, skillName, wasModelMemoryUsed, userMessage, aiResponse, programmingLanguage = null) {
+  updateStoredMemory(storedMemory, skillName, wasModelMemoryUsed, userMessage, aiResponse) {
     const normalizedSkillName = this.normalizeSkillName(skillName);
     const updatedMemory = [...(storedMemory || [])];
     
@@ -166,31 +143,12 @@ class PromptLoader {
       promptSentAsMemory: wasModelMemoryUsed,
       userMessage,
       aiResponse: aiResponse ? aiResponse.substring(0, 200) + '...' : null, // Truncated for storage
-      action: wasModelMemoryUsed ? 'MODEL_MEMORY_SENT' : 'REGULAR_MESSAGE',
-      programmingLanguage: programmingLanguage || null
+      action: wasModelMemoryUsed ? 'MODEL_MEMORY_SENT' : 'REGULAR_MESSAGE'
     };
     
     updatedMemory.push(memoryEntry);
         
     return updatedMemory;
-  }
-
-  /**
-   * Check if a skill requires programming language context
-   * @param {string} skillName - The skill name to check
-   * @returns {boolean} True if skill requires programming language
-   */
-  requiresProgrammingLanguage(skillName) {
-    const normalizedSkillName = this.normalizeSkillName(skillName);
-    return this.skillsRequiringProgrammingLanguage.includes(normalizedSkillName);
-  }
-
-  /**
-   * Get list of skills that require programming language context
-   * @returns {Array<string>} Array of skill names that require programming language
-   */
-  getSkillsRequiringProgrammingLanguage() {
-    return [...this.skillsRequiringProgrammingLanguage];
   }
 
   /**
@@ -233,8 +191,7 @@ class PromptLoader {
       totalPrompts: this.prompts.size,
       skillsUsedInSession: this.skillPromptSent.size,
       availableSkills: this.getAvailableSkills(),
-      skillsUsed: Array.from(this.skillPromptSent),
-      skillsRequiringProgrammingLanguage: this.skillsRequiringProgrammingLanguage
+      skillsUsed: Array.from(this.skillPromptSent)
     };
 
     return stats;

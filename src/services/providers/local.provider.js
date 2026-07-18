@@ -20,6 +20,9 @@ const config = require('../../core/config');
 const { LLMProvider } = require('./llm-provider');
 const { RequestBuilder } = require('../../core/request-builder');
 const { nodeFetch } = require('../../core/local-transport');
+// Notes/md-context (CONT-05): loaded once at launch (main.js onAppReady);
+// getContext() is a cheap cached-string read, safe on every request.
+const { contextManager } = require('../../core/context.manager');
 const logger = require('../../core/logger').createServiceLogger('LOCAL');
 
 class LocalProvider extends LLMProvider {
@@ -127,13 +130,13 @@ class LocalProvider extends LLMProvider {
 
   /**
    * Non-streaming transport core: serialize the neutral struct, run one
-   * OpenAI chat completion, return the answer text (language-normalized when
-   * options.programmingLanguage is set). `keep_alive` is passed in the body as
-   * defense-in-depth so the model stays resident regardless of adopt/own (the
-   * authoritative resident mechanism is LocalModelManager's warm-up, 03-04).
+   * OpenAI chat completion, return the answer text. `keep_alive` is passed in
+   * the body as defense-in-depth so the model stays resident regardless of
+   * adopt/own (the authoritative resident mechanism is LocalModelManager's
+   * warm-up, 03-04).
    * On error: log + rethrow (callers handle fallback); never crash the process.
    */
-  async generate(neutral, options = {}) {
+  async generate(neutral, _options = {}) {
     if (!this.client) throw new Error('Local LLM client not initialized');
     const { model, messages } = this.serialize(neutral);
     try {
@@ -143,9 +146,7 @@ class LocalProvider extends LLMProvider {
         stream: false,
         keep_alive: this.keepAlive
       });
-      const text = res?.choices?.[0]?.message?.content || '';
-      const lang = options.programmingLanguage || null;
-      return lang ? this.enforceProgrammingLanguage(text, lang) : text;
+      return res?.choices?.[0]?.message?.content || '';
     } catch (error) {
       logger.error('Local generate failed', { error: error.message });
       throw error;
@@ -154,10 +155,10 @@ class LocalProvider extends LLMProvider {
 
   /**
    * Streaming sibling of generate(): serialize + a streamed OpenAI chat
-   * completion, emitting incremental text via onDelta. Returns the full text
-   * (language-enforced when set). On error: log + rethrow; never crash.
+   * completion, emitting incremental text via onDelta. Returns the full text.
+   * On error: log + rethrow; never crash.
    */
-  async generateStream(neutral, options = {}, onDelta) {
+  async generateStream(neutral, _options = {}, onDelta) {
     if (!this.client) throw new Error('Local LLM client not initialized');
     const { model, messages } = this.serialize(neutral);
     let full = '';
@@ -179,8 +180,7 @@ class LocalProvider extends LLMProvider {
       logger.error('Local generateStream failed', { error: error.message });
       throw error;
     }
-    const lang = options.programmingLanguage || null;
-    return lang ? this.enforceProgrammingLanguage(full, lang) : full;
+    return full;
   }
 
   /**
@@ -210,35 +210,6 @@ class LocalProvider extends LLMProvider {
     }
   }
 
-  /**
-   * Normalize all triple-backtick code fences to the selected programming
-   * language tag. Pure, provider-agnostic string normalization. Used by
-   * generate/generateStream when a language is set.
-   */
-  enforceProgrammingLanguage(text, programmingLanguage) {
-    try {
-      if (!text || !programmingLanguage) return text;
-      const norm = String(programmingLanguage).toLowerCase();
-      const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript' };
-      const fenceTag = fenceTagMap[norm] || norm || 'text';
-
-      // Replace all triple-backtick fences' language token with the selected tag
-      const replacedBackticks = text.replace(/```([^\n]*)\n/g, (match, info) => {
-        const current = (info || '').trim();
-        // If already the desired fenceTag as the first token, keep as is
-        if (current.split(/\s+/)[0].toLowerCase() === fenceTag) return match;
-        return '```' + fenceTag + '\n';
-      });
-
-      // Optionally normalize tildes fences to backticks with correct tag
-      const normalizedTildes = replacedBackticks.replace(/~~~([^\n]*)\n/g, () => '```' + fenceTag + '\n');
-
-      return normalizedTildes;
-    } catch (_) {
-      return text;
-    }
-  }
-
   // ───────────────────────────────────────────────────────────────────────
   // main.js call-site surface. The facade re-exports the selected provider, so
   // main.js calls these directly. Each returns byte-compatible
@@ -252,18 +223,17 @@ class LocalProvider extends LLMProvider {
    * onDelta. On any failure, degrades to the canned fallback so the overlay
    * never goes blank.
    */
-  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, _sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, _sessionMemory = [], onDelta = null) {
     const startTime = Date.now();
     this.requestCount++;
     try {
-      const neutral = this.requestBuilder.buildImageRequest(imageBuffer, mimeType, activeSkill, programmingLanguage);
-      const response = await this.generateStream(neutral, { programmingLanguage }, onDelta);
+      const neutral = this.requestBuilder.buildImageRequest(imageBuffer, mimeType, activeSkill, contextManager.getContext());
+      const response = await this.generateStream(neutral, {}, onDelta);
       logger.logPerformance('Local image streaming', startTime, { activeSkill, requestId: this.requestCount });
       return {
         response,
         metadata: {
           skill: activeSkill,
-          programmingLanguage,
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
           usedFallback: false,
@@ -280,18 +250,17 @@ class LocalProvider extends LLMProvider {
   }
 
   /** Text prompt → streamed answer (PROV-03). Degrades to the canned fallback. */
-  async processTextWithSkillStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processTextWithSkillStream(text, activeSkill, sessionMemory = [], onDelta = null) {
     const startTime = Date.now();
     this.requestCount++;
     try {
-      const neutral = this.requestBuilder.buildTextRequest(text, activeSkill, sessionMemory, programmingLanguage);
-      const response = await this.generateStream(neutral, { programmingLanguage }, onDelta);
+      const neutral = this.requestBuilder.buildTextRequest(text, activeSkill, sessionMemory, contextManager.getContext());
+      const response = await this.generateStream(neutral, {}, onDelta);
       logger.logPerformance('Local text streaming', startTime, { activeSkill, requestId: this.requestCount });
       return {
         response,
         metadata: {
           skill: activeSkill,
-          programmingLanguage,
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
           usedFallback: false,
@@ -306,18 +275,17 @@ class LocalProvider extends LLMProvider {
   }
 
   /** Transcribed speech → streamed intelligent response. Degrades to fallback. */
-  async processTranscriptionWithIntelligentResponseStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processTranscriptionWithIntelligentResponseStream(text, activeSkill, sessionMemory = [], onDelta = null) {
     const startTime = Date.now();
     this.requestCount++;
     try {
-      const neutral = this.requestBuilder.buildTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage);
-      const response = await this.generateStream(neutral, { programmingLanguage }, onDelta);
+      const neutral = this.requestBuilder.buildTranscriptionRequest(text, activeSkill, sessionMemory, contextManager.getContext());
+      const response = await this.generateStream(neutral, {}, onDelta);
       logger.logPerformance('Local transcription streaming', startTime, { activeSkill, requestId: this.requestCount });
       return {
         response,
         metadata: {
           skill: activeSkill,
-          programmingLanguage,
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
           usedFallback: false,

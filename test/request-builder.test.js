@@ -12,7 +12,7 @@ const evt = (role, content) => ({ role, content });
 // Mimics session.manager: getConversationHistory(n) returns the last n events
 // (the real singleton caps with .slice(-maxEntries)); records the cap it was
 // asked for so tests can prove RequestBuilder requests the right limit.
-function makeSession(events, skillContext = { skillPrompt: 'SYS', requiresProgrammingLanguage: false }) {
+function makeSession(events, skillContext = { skillPrompt: 'SYS' }) {
   const calls = { historyCaps: [], skillContextArgs: null };
   return {
     calls,
@@ -20,8 +20,8 @@ function makeSession(events, skillContext = { skillPrompt: 'SYS', requiresProgra
       calls.historyCaps.push(n);
       return events.slice(-n);
     },
-    getSkillContext(skill, lang) {
-      calls.skillContextArgs = { skill, lang };
+    getSkillContext(skill) {
+      calls.skillContextArgs = { skill };
       return skillContext;
     }
   };
@@ -30,8 +30,7 @@ function makeSession(events, skillContext = { skillPrompt: 'SYS', requiresProgra
 function makePromptLoader(overrides = {}) {
   return {
     getSkillPrompt: overrides.getSkillPrompt || (() => 'IMG-SYS'),
-    getRequestComponents: overrides.getRequestComponents || (() => ({ shouldUseModelMemory: true, skillPrompt: 'FALLBACK-SYS' })),
-    requiresProgrammingLanguage: overrides.requiresProgrammingLanguage || (() => false)
+    getRequestComponents: overrides.getRequestComponents || (() => ({ shouldUseModelMemory: true, skillPrompt: 'FALLBACK-SYS' }))
   };
 }
 
@@ -100,7 +99,7 @@ describe('buildTextRequest', () => {
   test('mdContext defaults to empty and passes through', () => {
     const rb = new RequestBuilder({ sessionManager: makeSession(mixed), promptLoader: makePromptLoader() });
     assert.equal(rb.buildTextRequest('t', 'dsa').mdContext, '');
-    assert.equal(rb.buildTextRequest('t', 'dsa', [], null, 'MD-NOTES').mdContext, 'MD-NOTES');
+    assert.equal(rb.buildTextRequest('t', 'dsa', [], 'MD-NOTES').mdContext, 'MD-NOTES');
   });
 
   test('fallback branch (no getConversationHistory): promptLoader components, empty history', () => {
@@ -168,7 +167,7 @@ describe('buildImageRequest', () => {
   test('mdContext passes through', () => {
     const rb = new RequestBuilder({ sessionManager: makeSession([]), promptLoader: makePromptLoader() });
     assert.equal(rb.buildImageRequest(buf, 'image/png', 'dsa').mdContext, '');
-    assert.equal(rb.buildImageRequest(buf, 'image/png', 'dsa', null, 'MD').mdContext, 'MD');
+    assert.equal(rb.buildImageRequest(buf, 'image/png', 'dsa', 'MD').mdContext, 'MD');
   });
 });
 
@@ -181,6 +180,8 @@ describe('buildTranscriptionRequest', () => {
     assert.equal(r.skill, 'dsa');
     assert.ok(r.systemPrompt.includes('Intelligent Transcription Response System'));
     assert.ok(!/interview/i.test(r.systemPrompt), 'transcription prompt has no interview framing (GEN-01)');
+    assert.ok(!r.systemPrompt.includes('CODING CONTEXT'), 'per-language CODING CONTEXT block is gone');
+    assert.ok(r.systemPrompt.includes('default to Python'), 'static default-Python smart clause present');
     assert.equal(r.userText, 'hi');   // cleanText trims
     assert.deepEqual(r.images, []);
     assertNoWireKeys(r);
@@ -225,6 +226,6 @@ describe('buildTranscriptionRequest', () => {
   test('mdContext passes through', () => {
     const rb = new RequestBuilder({ sessionManager: makeSession(mixed), promptLoader: makePromptLoader() });
     assert.equal(rb.buildTranscriptionRequest('q', 'dsa').mdContext, '');
-    assert.equal(rb.buildTranscriptionRequest('q', 'dsa', [], null, 'MD').mdContext, 'MD');
+    assert.equal(rb.buildTranscriptionRequest('q', 'dsa', [], 'MD').mdContext, 'MD');
   });
 });

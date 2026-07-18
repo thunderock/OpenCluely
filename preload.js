@@ -39,12 +39,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   hideSettings: () => ipcRenderer.invoke('hide-settings'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
+  // Native directory picker for the notes/md-context folder (CONT-05).
+  selectNotesFolder: () => ipcRenderer.invoke('select-notes-folder'),
 
   // First-run onboarding
   getFirstRunStatus: () => ipcRenderer.invoke('get-first-run-status'),
   completeFirstRun: () => ipcRenderer.invoke('complete-first-run'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   closeOnboarding: () => ipcRenderer.invoke('close-onboarding'),
+
+  // TCC permission recovery (SEC-02): deep-link to the exact System Settings
+  // privacy pane (the kind enum → x-apple URL mapping lives in MAIN — no URL
+  // ever crosses the bridge) + one-click relaunch (Screen Recording grants
+  // only apply to a new process).
+  openPrivacySettings: (kind) => ipcRenderer.invoke('open-privacy-settings', kind),
+  relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
   // Resident STT engine (STT-01/STT-02). The Python detect/install bridges are
   // gone (their handlers were deleted); the ggml model download + structured
   // progress reuse the same `install-progress` channel. getWhisperStatus /
@@ -133,7 +142,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onInteractionModeChanged: (callback) => ipcRenderer.on('interaction-mode-changed', callback),
   onRecordingStarted: (callback) => ipcRenderer.on('recording-started', callback),
   onRecordingStopped: (callback) => ipcRenderer.on('recording-stopped', callback),
-  onCodingLanguageChanged: (callback) => ipcRenderer.on('coding-language-changed', callback),
+  // SEC-02 receive-only: transition-only { screen:'ok'|'lost', mic:'ok'|'lost',
+  // reason } broadcasts from the TCC monitor drive the recovery banner.
+  onPermissionStatus: (callback) => ipcRenderer.on('permission-status', callback),
   onMainWindowShown: (callback) => ipcRenderer.on('main-window-shown', callback),
   
   // Generic receive method

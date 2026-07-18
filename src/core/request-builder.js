@@ -23,27 +23,16 @@ class RequestBuilder {
     return `Context: ${activeSkill.toUpperCase()} analysis request\n\nText to analyze:\n${text}`;
   }
 
-  formatImageInstruction(activeSkill, programmingLanguage) {
-    const langNote = programmingLanguage ? ` Use only ${programmingLanguage.toUpperCase()} for any code.` : '';
-    return `Analyze this image for a ${activeSkill.toUpperCase()} question. Extract the problem concisely and provide the best possible solution with explanation and final code.${langNote}`;
+  formatImageInstruction(activeSkill) {
+    return `Analyze this image for a ${activeSkill.toUpperCase()} question. Extract the problem concisely and provide the best possible solution with explanation and final code.`;
   }
 
-  getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage) {
+  getIntelligentTranscriptionPrompt(activeSkill) {
     let prompt = `# Intelligent Transcription Response System
 
 You are a concise, private copilot in ${activeSkill.toUpperCase()} mode. You hear the live conversation and see the user's screen and notes; suggest what to say or do next.
 Reply with the actual words to say or the direct answer — not meta-commentary — and never mention that you are an AI or that you are assisting.
 Respond to the point: do not repeat the question or add information the moment does not need.`;
-
-    // Add programming language context if provided
-    if (programmingLanguage) {
-      const lang = String(programmingLanguage).toLowerCase();
-      const languageMap = { cpp: 'C++', c: 'C', python: 'Python', java: 'Java', javascript: 'JavaScript', js: 'JavaScript' };
-      const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript' };
-      const languageTitle = languageMap[lang] || (lang.charAt(0).toUpperCase() + lang.slice(1));
-      const fenceTag = fenceTagMap[lang] || lang || 'text';
-      prompt += `\n\nCODING CONTEXT: Respond ONLY in ${languageTitle}. All code blocks must use triple backticks with language tag \`\`\`${fenceTag}\`\`\`. Do not include other languages unless explicitly asked.`;
-    }
 
     prompt += `
 
@@ -66,7 +55,7 @@ Respond to the point: do not repeat the question or add information the moment d
 - Use bullet points only when they make a multi-part answer clearer.
 - Stay in ${activeSkill.toUpperCase()} mode.
 
-If the user's input is a coding problem statement and contains no code, produce a complete, runnable solution in the selected programming language without asking for more details, with the final implementation in a properly tagged code block.
+If the user's input is a coding problem statement and contains no code, produce a complete, runnable solution — default to Python unless the question, on-screen code, or spoken context clearly indicates another language — without asking for more details, with the final implementation in a properly tagged code block.
 
 Remember: default to a short, ready-to-use suggestion; expand only when the question genuinely needs depth.`;
 
@@ -77,12 +66,12 @@ Remember: default to a short, ready-to-use suggestion; expand only when the ques
 
   // Text path (assembly only; provider serializes to its own wire shape).
   // History cap: 15 recent events.
-  buildTextRequest(text, activeSkill, sessionMemory = [], programmingLanguage = null, mdContext = '') {
+  buildTextRequest(text, activeSkill, sessionMemory = [], mdContext = '') {
     const sessionManager = this.sessionManager;
 
     if (sessionManager && typeof sessionManager.getConversationHistory === 'function') {
       const conversationHistory = sessionManager.getConversationHistory(15);
-      const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
+      const skillContext = sessionManager.getSkillContext(activeSkill);
 
       const history = conversationHistory
         .filter(event => {
@@ -119,8 +108,7 @@ Remember: default to a short, ready-to-use suggestion; expand only when the ques
     const requestComponents = this.promptLoader.getRequestComponents(
       activeSkill,
       text,
-      sessionMemory,
-      programmingLanguage
+      sessionMemory
     );
 
     const systemPrompt = requestComponents.shouldUseModelMemory && requestComponents.skillPrompt
@@ -139,8 +127,8 @@ Remember: default to a short, ready-to-use suggestion; expand only when the ques
   }
 
   // Replicates the inline image assembly in processImageWithSkill. No history.
-  buildImageRequest(imageBufferOrBase64, mimeType, activeSkill, programmingLanguage = null, mdContext = '') {
-    const skillPrompt = this.promptLoader.getSkillPrompt(activeSkill, programmingLanguage) || '';
+  buildImageRequest(imageBufferOrBase64, mimeType, activeSkill, mdContext = '') {
+    const skillPrompt = this.promptLoader.getSkillPrompt(activeSkill) || '';
     const base64 = Buffer.isBuffer(imageBufferOrBase64)
       ? imageBufferOrBase64.toString('base64')
       : imageBufferOrBase64;
@@ -149,7 +137,7 @@ Remember: default to a short, ready-to-use suggestion; expand only when the ques
       kind: 'image',
       skill: activeSkill,
       systemPrompt: skillPrompt && skillPrompt.trim().length > 0 ? skillPrompt : null,
-      userText: this.formatImageInstruction(activeSkill, programmingLanguage),
+      userText: this.formatImageInstruction(activeSkill),
       images: [{ data: base64, mimeType }],
       history: [],
       mdContext
@@ -158,13 +146,13 @@ Remember: default to a short, ready-to-use suggestion; expand only when the ques
 
   // Replicates buildIntelligentTranscriptionRequest[WithHistory].
   // History cap: 10 recent events, then last 8.
-  buildTranscriptionRequest(text, activeSkill, _sessionMemory = [], programmingLanguage = null, mdContext = '') {
+  buildTranscriptionRequest(text, activeSkill, _sessionMemory = [], mdContext = '') {
     const cleanText = text && typeof text === 'string' ? text.trim() : '';
     if (!cleanText) {
       throw new Error('Empty or invalid transcription text provided to buildIntelligentTranscriptionRequest');
     }
 
-    const systemPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage);
+    const systemPrompt = this.getIntelligentTranscriptionPrompt(activeSkill);
     const sessionManager = this.sessionManager;
 
     if (sessionManager && typeof sessionManager.getConversationHistory === 'function') {

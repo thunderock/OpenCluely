@@ -715,6 +715,10 @@
     <!-- PrismJS core and autoloader for language components -->
     <script src="./node_modules/prismjs/prism.min.js"></script>
     <script src="./node_modules/prismjs/plugins/autoloader/prism-autoloader.min.js"></script>
+    <!-- SEC-01: DOMPurify UMD + the one locked policy + window.sanitizeHtml glue (order matters) -->
+    <script src="./node_modules/dompurify/dist/purify.js"></script>
+    <script src="./src/core/sanitize-policy.js"></script>
+    <script src="./src/ui/sanitize.js"></script>
     
     <script>
       // Configure Prism autoloader
@@ -864,9 +868,9 @@
         const textDiv = document.createElement('div');
         textDiv.className = 'message-text';
         
-        // Format assistant messages as markdown
+        // Format assistant messages as markdown (sanitized — SEC-01: model output is untrusted)
         if (type === 'assistant') {
-          textDiv.innerHTML = formatMarkdown(text);
+          textDiv.innerHTML = window.sanitizeHtml(formatMarkdown(text));
           if (window.renderMathInElement) window.renderMathInElement(textDiv);
         } else {
           textDiv.textContent = text;
@@ -1098,7 +1102,7 @@
         const pre = document.createElement('pre');
         const codeEl = document.createElement('code');
         codeEl.className = `language-${lang}`;
-        codeEl.innerHTML = escapeHtml(code || '');
+        codeEl.innerHTML = window.sanitizeHtml(escapeHtml(code || '')); // escaped, but composite sink — sanitize anyway (SEC-01)
 
         const copyBtn = document.createElement('button');
         copyBtn.className = 'copy-btn';
@@ -1308,6 +1312,19 @@
           e.preventDefault();
           if (!isInteractive || !speechAvailable) return;
           micButton && micButton.click();
+        }
+      });
+
+      // SEC-01: sanitized model-output links never navigate in-window —
+      // delegated handler routes http(s) hrefs through the validated
+      // open-external IPC (window-level will-navigate stays as backstop).
+      document.addEventListener('click', (e) => {
+        const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+        if (!a) return;
+        e.preventDefault();
+        const href = a.getAttribute('href') || '';
+        if (/^https?:\/\//i.test(href) && window.electronAPI && window.electronAPI.openExternal) {
+          window.electronAPI.openExternal(href);
         }
       });
 

@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Provider Seam — Wrap Gemini Verbatim** - `LLMProvider` abstraction + `RequestBuilder`; app still works on Gemini, call-sites unchanged
 - [x] **Phase 3: Local Engine + Cloud Removal** - Local multimodal model as the primary/default path; Gemini removed last, after Local is proven (Azure is STT-only → removed in Phase 4 with the STT replacement) (completed 2026-07-16)
 - [x] **Phase 4: Continuous Hearing — Resident STT + Ambient Listening** - Resident whisper.cpp continuously transcribes mic + macOS system audio from launch to quit (completed 2026-07-16; system-audio capture verification + attended real-world validation deferred to Phase 8 by human decision)
-- [ ] **Phase 5: Continuous Capture, Notes & Hardening** - Throttled/deduped screen capture + bounded `.md` context, shipped with output sanitization, TCC recovery, and IPC scoping
+- [x] **Phase 5: Continuous Capture, Notes & Hardening** - Throttled/deduped screen capture + bounded `.md` context, shipped with output sanitization, TCC recovery, and IPC scoping (completed 2026-07-17; automated gate green + attended five-pillar verification human-approved; verification passed 24/24)
 - [ ] **Phase 6: Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI** - After each pause, a relevant streamed answer appears; relevance gate + listening indicator + kill switch
 - [ ] **Phase 7: CLI Backup Providers — Claude / Codex** - On-demand escalation + auto-fallback to Claude/Codex CLI, reusing terminal auth, never on the per-pause path
 - [ ] **Phase 8: Packaging & Release — macOS DMG CI + Cleanup** - Unsigned universal macOS DMG in CI, `asarUnpack` for helpers, `xattr` docs, dead-code + license cleanup
@@ -106,7 +106,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Model output containing hostile markdown/HTML (e.g., an `<img onerror>` lifted from on-screen text) is rendered inert at every `innerHTML` sink via DOMPurify.
   4. After screen or mic permission is lost (e.g., all-black frames / mic status after an update), the app detects it and guides the user to re-grant (macOS TCC recovery).
   5. The response/overlay renderers cannot read settings or exfiltrate keys — privileged IPC (settings read, `openExternal`, clipboard) is scoped by sender.
-**Plans**: TBD (derived in /gsd:plan-phase)
+**Plans**: 6 plans (5 waves)
+- [x] 05-01-PLAN.md — Continuous capture loop: pure frame-dedup (dHash) + downscaled 2s tick + lock/sleep lifecycle (Wave 1)
+- [x] 05-02-PLAN.md — DOMPurify central policy + every model-output innerHTML sink sanitized + link routing (Wave 1)
+- [x] 05-03-PLAN.md — Notes context loader (12k whole-file budget) wired into RequestBuilder.mdContext + settings UI (Wave 2)
+- [x] 05-04-PLAN.md — TCC loss detection (status + black-frame cross-check) + recovery banner + deep-link/relaunch IPC (Wave 3)
+- [x] 05-05-PLAN.md — Sender-scoped IPC: channel audience table + guarded handlers + per-class preload split (Wave 4)
+- [x] 05-06-PLAN.md — Phase gate: full automated suite + attended five-pillar verification checkpoint (Wave 5)
 
 ### Phase 6: Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI
 **Goal**: The core value — after each natural pause, a relevant answer streams into the stealth overlay, generated locally from screen + speech + notes, surfaced only when actually answerable, with the trust affordances that make always-on acceptable.
@@ -164,7 +170,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. Provider Seam — Wrap Gemini Verbatim | 3/3 | Complete | 2026-07-14 |
 | 3. Local Engine + Cloud Removal | 8/8 | Complete    | 2026-07-16 |
 | 4. Continuous Hearing — Resident STT + Ambient Listening | 9/9 | Complete | 2026-07-16 |
-| 5. Continuous Capture, Notes & Hardening | 0/TBD | Not started | - |
+| 5. Continuous Capture, Notes & Hardening | 6/6 | Complete | 2026-07-17 |
 | 6. Continuous Mode — Pause Orchestrator, Relevance Gate & Trust UI | 0/TBD | Not started | - |
 | 7. CLI Backup Providers — Claude / Codex | 0/TBD | Not started | - |
 | 8. Packaging & Release — macOS DMG CI + Cleanup | 0/TBD | Not started | - |

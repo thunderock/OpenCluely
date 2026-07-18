@@ -1,6 +1,6 @@
 const path = require("path");
 const fs = require("fs");
-const { app, BrowserWindow, globalShortcut, session, ipcMain, powerMonitor } = require("electron");
+const { app, BrowserWindow, globalShortcut, session, ipcMain, powerMonitor, systemPreferences } = require("electron");
 const { upsertEnvContent } = require("./src/core/env-file");
 
 // ── Resolve a stable .env location ──
@@ -59,6 +59,7 @@ app.commandLine.appendSwitch("no-pings");
 const logger = require("./src/core/logger").createServiceLogger("MAIN");
 const config = require("./src/core/config");
 const FirstRunManager = require("./src/core/first-run");
+const { contextManager } = require("./src/core/context.manager");
 
 // ── Global crash guard ──
 // The speech path spawns external processes on macOS/Linux (the sox/rec/arecord
@@ -99,8 +100,6 @@ class ApplicationController {
     this.isReady = false;
     this.starting = false;
     this.activeSkill = "general";
-  // Default to C++ so language is enforced from first run
-  this.codingLanguage = "cpp";
     this.speechAvailable = false;
 
     // Ambient listening (STT-03/SC3): the audio stream stays open launch→quit.
@@ -113,6 +112,13 @@ class ApplicationController {
     // events must never re-enter and double-restart the whisper-server / tap.
     this._rewarmInFlight = false;
     this._powerMonitorWired = false;
+    // Continuous capture lifecycle (CONT-04): guard against double-registering
+    // the lock/sleep pause-resume powerMonitor listeners.
+    this._captureLifecycleArmed = false;
+    // TCC permission-loss monitor (SEC-02): built in onAppReady (darwin-gated
+    // by the factory); null until then so early event handlers can `?.` it.
+    this.tccMonitor = null;
+    this._tccMonitorArmed = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
     // single spoken question can still arrive as a few fragments (mid-thought
@@ -274,6 +280,18 @@ class ApplicationController {
       // GPU/stream state.
       this._setupPowerMonitor();
 
+      // Continuous capture lifecycle (CONT-04): pause on lock/sleep, resume on
+      // unlock/wake. Armed EARLY like the wake re-warm so a lock during the
+      // slow model warmup below still pauses the loop.
+      this._registerCaptureLifecycle();
+
+      // TCC permission-loss monitor (SEC-02): fuse the capture loop's
+      // black-frame signal with getMediaAccessStatus (cross-checked, both
+      // required) + the speech-path failure signal into transition-only
+      // permission-status broadcasts. Event-driven re-checks only — no
+      // polling timer. Armed EARLY so frame stats from the first tick land.
+      this._registerTccMonitor();
+
       // Initialize default stealth mode with terminal icon
       this.updateAppIcon("terminal");
 
@@ -308,6 +326,20 @@ class ApplicationController {
       });
 
       sessionManager.addEvent("Application started");
+
+      // Notes/md-context (CONT-05): load the settings-configured folder of
+      // .md files ONCE at launch into a bounded string — every model call
+      // carries it via RequestBuilder.mdContext. Launch-only reload (edit
+      // notes -> restart); isolated + non-blocking like the manager starts
+      // below (a bad folder degrades to empty context, never blocks startup).
+      try {
+        const notesStatus = await contextManager.load();
+        logger.info("Notes context loaded", notesStatus);
+      } catch (e) {
+        logger.warn("Notes context load failed (continuing without notes)", {
+          error: e.message,
+        });
+      }
 
       // Local engine (PROV-05): adopt a running Ollama or start one so the app
       // is answer-ready. NEVER blocks startup — start() degrades gracefully and
@@ -416,6 +448,22 @@ class ApplicationController {
       // up (complete-first-run re-invokes it) so we never grab the mic
       // mid-setup.
       this._ensureAmbientListening("launch");
+
+      // Continuous screen capture (CONT-04): start the 2s hold-latest loop —
+      // NON-BLOCKING + guarded like ambient listening above. Skipped while the
+      // onboarding wizard is up (complete-first-run re-invokes it); a capture
+      // failure must never block startup.
+      this._ensureContinuousCapture("launch");
+
+      // TCC startup re-check (SEC-02): one event-driven status pass now that
+      // everything is armed. Status alone never banners the screen (the locked
+      // cross-check needs the black-frame signal too) — a lone non-granted
+      // status is warn-logged via the disagreement seam instead.
+      try {
+        this.tccMonitor?.checkNow("startup");
+      } catch (e) {
+        logger.warn("TCC startup check failed", { error: e.message });
+      }
     } catch (error) {
       this.starting = false;
       logger.error("Application initialization failed", {
@@ -480,6 +528,9 @@ class ApplicationController {
 
   setupServiceEventHandlers() {
     speechService.on("recording-started", () => {
+      // Mic stream (re)started successfully — clear the sticky SEC-02
+      // mic-failure flag so the voice banner dismisses on recovery.
+      try { this.tccMonitor?.recordMicRecovered(); } catch (_) { /* ignore */ }
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("recording-started");
       });
@@ -527,6 +578,10 @@ class ApplicationController {
     speechService.on("error", (error) => {
       // In error, still compute availability
       this.speechAvailable = speechService.isAvailable ? speechService.isAvailable() : false;
+      // Mic-loss signal (SEC-02): a speech failure is ONE pillar of the mic
+      // cross-check — the banner still requires mic status !== 'granted'
+      // (a failure with a granted mic is warn-logged as a disagreement).
+      try { this.tccMonitor?.recordMicFailure(); } catch (_) { /* ignore */ }
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("speech-error", { error, available: this.speechAvailable });
       });
@@ -534,12 +589,38 @@ class ApplicationController {
   }
 
   setupIPCHandlers() {
-  ipcMain.handle("take-screenshot", () => this.triggerScreenshotOCR());
-  ipcMain.handle("list-displays", () => captureService.listDisplays());
-  ipcMain.handle("capture-area", (event, options) => captureService.captureAndProcess(options));
+    // ── SEC-03 sender-scoped IPC gate (05-05) ──
+    // EVERY inbound registration below goes through guardedHandle/guardedOn:
+    // the sender's WebContents id resolves to its window class via the
+    // WindowManager registry, and the channel→audience table in
+    // src/core/ipc-scope.js decides. Violations are denied with a structured
+    // warn log — never a throw, never a silent null (degrade-never-crash).
+    // New channels MUST get a CHANNEL_AUDIENCES row or they are default-denied
+    // (and the ipc-scope completeness test fails).
+    const { isChannelAllowed } = require("./src/core/ipc-scope");
+    const guardedHandle = (channel, fn) => ipcMain.handle(channel, (event, ...args) => {
+      const windowType = windowManager.getWindowTypeByWebContentsId(event.sender && event.sender.id);
+      if (!isChannelAllowed(channel, windowType)) {
+        logger.warn("IPC denied", { channel, windowType: windowType || "unknown" });
+        return { ok: false, error: "denied" };
+      }
+      return fn(event, ...args);
+    });
+    const guardedOn = (channel, fn) => ipcMain.on(channel, (event, ...args) => {
+      const windowType = windowManager.getWindowTypeByWebContentsId(event.sender && event.sender.id);
+      if (!isChannelAllowed(channel, windowType)) {
+        logger.warn("IPC denied", { channel, windowType: windowType || "unknown" });
+        return; // drop silently after the warn log (never throw)
+      }
+      fn(event, ...args);
+    });
+
+  guardedHandle("take-screenshot", () => this.triggerScreenshotOCR());
+  guardedHandle("list-displays", () => captureService.listDisplays());
+  guardedHandle("capture-area", (event, options) => captureService.captureAndProcess(options));
     
     // Provide reliable clipboard write via main process
-    ipcMain.handle("copy-to-clipboard", (event, text) => {
+    guardedHandle("copy-to-clipboard", (event, text) => {
       try {
         const { clipboard } = require("electron");
         clipboard.writeText(String(text ?? ""));
@@ -550,11 +631,11 @@ class ApplicationController {
       }
     });
     
-    ipcMain.handle("get-speech-availability", () => {
+    guardedHandle("get-speech-availability", () => {
       return speechService.isAvailable ? speechService.isAvailable() : false;
     });
 
-    ipcMain.handle("start-speech-recognition", () => {
+    guardedHandle("start-speech-recognition", () => {
       // Interim ON via the mic button: this IS the ambient on/off control this
       // phase, so record the desired-listening intent for auto-resume.
       this._ambientDesired = true;
@@ -562,7 +643,7 @@ class ApplicationController {
       return speechService.getStatus();
     });
 
-    ipcMain.handle("stop-speech-recognition", () => {
+    guardedHandle("stop-speech-recognition", () => {
       // Interim OFF via the mic button: pause ambient listening (halts mic
       // capture; the system-tap ingest is gated off by isRecording).
       this._ambientDesired = false;
@@ -574,7 +655,7 @@ class ApplicationController {
     // just before it re-acquires getUserMedia so we drop the truncated partial
     // from the now-dead device + reset that channel's VAD (no stranded
     // half-word, no double-flush). Degrade-never-crash.
-    ipcMain.handle("speech-reattach-channel", (_event, source) => {
+    guardedHandle("speech-reattach-channel", (_event, source) => {
       try {
         if (typeof speechService.resetChannelForReattach === "function") {
           speechService.resetChannelForReattach(source === "system" ? "system" : "mic");
@@ -587,24 +668,24 @@ class ApplicationController {
     });
 
     // Raw PCM audio captured by the renderer's Web Audio API (Windows Whisper path)
-    ipcMain.on("audio-chunk", (_event, data) => {
+    guardedOn("audio-chunk", (_event, data) => {
       if (data && data.buffer) {
         speechService.handleAudioChunkFromRenderer(Buffer.from(data.buffer));
       }
     });
 
     // Also handle direct send events for fallback
-    ipcMain.on("start-speech-recognition", () => {
+    guardedOn("start-speech-recognition", () => {
       this._ambientDesired = true;
       speechService.startRecording();
     });
 
-    ipcMain.on("stop-speech-recognition", () => {
+    guardedOn("stop-speech-recognition", () => {
       this._ambientDesired = false;
       speechService.stopRecording();
     });
 
-    ipcMain.on("chat-window-ready", () => {
+    guardedOn("chat-window-ready", () => {
       // Send a test message to confirm communication
       setTimeout(() => {
         windowManager.broadcastToAllWindows("transcription-received", {
@@ -613,7 +694,7 @@ class ApplicationController {
       }, 1000);
     });
 
-    ipcMain.on("main-window-ready", () => {
+    guardedOn("main-window-ready", () => {
       // Re-check availability whenever the main overlay finishes loading;
       // this covers first-run where the window was hidden during onboarding.
       this.speechAvailable = speechService.isAvailable
@@ -627,43 +708,43 @@ class ApplicationController {
       });
     });
 
-    ipcMain.on("test-chat-window", () => {
+    guardedOn("test-chat-window", () => {
       windowManager.broadcastToAllWindows("transcription-received", {
         text: "🧪 IMMEDIATE TEST: Chat window IPC communication test successful!",
       });
     });
 
-    ipcMain.handle("show-all-windows", () => {
+    guardedHandle("show-all-windows", () => {
       windowManager.showAllWindows();
       return windowManager.getWindowStats();
     });
 
-    ipcMain.handle("hide-all-windows", () => {
+    guardedHandle("hide-all-windows", () => {
       windowManager.hideAllWindows();
       return windowManager.getWindowStats();
     });
 
-    ipcMain.handle("enable-window-interaction", () => {
+    guardedHandle("enable-window-interaction", () => {
       windowManager.setInteractive(true);
       return windowManager.getWindowStats();
     });
 
-    ipcMain.handle("disable-window-interaction", () => {
+    guardedHandle("disable-window-interaction", () => {
       windowManager.setInteractive(false);
       return windowManager.getWindowStats();
     });
 
-    ipcMain.handle("switch-to-chat", () => {
+    guardedHandle("switch-to-chat", () => {
       windowManager.switchToWindow("chat");
       return windowManager.getWindowStats();
     });
 
-    ipcMain.handle("switch-to-skills", () => {
+    guardedHandle("switch-to-skills", () => {
       windowManager.switchToWindow("skills");
       return windowManager.getWindowStats();
     });
 
-    ipcMain.handle("resize-window", (event, { width, height }) => {
+    guardedHandle("resize-window", (event, { width, height }) => {
       const mainWindow = windowManager.getWindow("main");
       if (mainWindow) {
         // Enforce horizontal constraints: min ~one icon, max original width
@@ -682,7 +763,7 @@ class ApplicationController {
       return { success: true };
     });
 
-    ipcMain.handle("move-window", (event, { deltaX, deltaY }) => {
+    guardedHandle("move-window", (event, { deltaX, deltaY }) => {
       const mainWindow = windowManager.getWindow("main");
       if (mainWindow) {
         const [currentX, currentY] = mainWindow.getPosition();
@@ -699,27 +780,27 @@ class ApplicationController {
       return { success: true };
     });
 
-    ipcMain.handle("get-session-history", () => {
+    guardedHandle("get-session-history", () => {
       return sessionManager.getOptimizedHistory();
     });
 
-    ipcMain.handle("clear-session-memory", () => {
+    guardedHandle("clear-session-memory", () => {
       sessionManager.clear();
       windowManager.broadcastToAllWindows("session-cleared");
       return { success: true };
     });
 
-    ipcMain.handle("force-always-on-top", () => {
+    guardedHandle("force-always-on-top", () => {
       windowManager.forceAlwaysOnTopForAllWindows();
       return { success: true };
     });
 
-    ipcMain.handle("test-always-on-top", () => {
+    guardedHandle("test-always-on-top", () => {
       const results = windowManager.testAlwaysOnTopForAllWindows();
       return { success: true, results };
     });
 
-    ipcMain.handle("send-chat-message", async (event, text) => {
+    guardedHandle("send-chat-message", async (event, text) => {
       // Add chat message to session memory
       sessionManager.addUserInput(text, 'chat');
       logger.debug('Chat message added to session memory', { textLength: text.length });
@@ -743,7 +824,7 @@ class ApplicationController {
       return { success: true };
     });
 
-    ipcMain.handle("get-skill-prompt", (event, skillName) => {
+    guardedHandle("get-skill-prompt", (event, skillName) => {
       try {
         const { promptLoader } = require('./prompt-loader');
         const skillPrompt = promptLoader.getSkillPrompt(skillName);
@@ -755,33 +836,33 @@ class ApplicationController {
     });
 
     // Window binding IPC handlers
-    ipcMain.handle("set-window-binding", (event, enabled) => {
+    guardedHandle("set-window-binding", (event, enabled) => {
       return windowManager.setWindowBinding(enabled);
     });
 
-    ipcMain.handle("toggle-window-binding", () => {
+    guardedHandle("toggle-window-binding", () => {
       return windowManager.toggleWindowBinding();
     });
 
-    ipcMain.handle("get-window-binding-status", () => {
+    guardedHandle("get-window-binding-status", () => {
       return windowManager.getWindowBindingStatus();
     });
 
-    ipcMain.handle("get-window-stats", () => {
+    guardedHandle("get-window-stats", () => {
       return windowManager.getWindowStats();
     });
 
-    ipcMain.handle("set-window-gap", (event, gap) => {
+    guardedHandle("set-window-gap", (event, gap) => {
       return windowManager.setWindowGap(gap);
     });
 
-    ipcMain.handle("move-bound-windows", (event, { deltaX, deltaY }) => {
+    guardedHandle("move-bound-windows", (event, { deltaX, deltaY }) => {
       windowManager.moveBoundWindows(deltaX, deltaY);
       return windowManager.getWindowBindingStatus();
     });
 
     // Settings handlers
-    ipcMain.handle("show-settings", () => {
+    guardedHandle("show-settings", () => {
       windowManager.showSettings();
 
       // Send current settings to the settings window
@@ -796,13 +877,34 @@ class ApplicationController {
       return { success: true };
     });
 
-    ipcMain.handle("get-settings", () => {
+    guardedHandle("get-settings", () => {
       return this.getSettings();
+    });
+
+    // Native folder picker for the notes/md-context folder (CONT-05). Returns
+    // the chosen directory path; the settings renderer puts it into the
+    // editable path field (persistence happens via save-settings ->
+    // NOTES_FOLDER, restart-to-apply). Plain ipcMain.handle for now; 05-05
+    // converts every handler to the sender-scoped guarded form.
+    guardedHandle("select-notes-folder", async () => {
+      try {
+        const { dialog } = require("electron");
+        const result = await dialog.showOpenDialog({
+          properties: ["openDirectory"],
+        });
+        if (result.canceled || !result.filePaths.length) {
+          return { canceled: true };
+        }
+        return { canceled: false, path: result.filePaths[0] };
+      } catch (e) {
+        logger.warn("Notes folder picker failed", { error: e.message });
+        return { canceled: true, error: e.message };
+      }
     });
 
     // First-run onboarding status — renderer can query to know whether
     // to show the welcome banner / prompt for API-key entry.
-    ipcMain.handle("get-first-run-status", () => {
+    guardedHandle("get-first-run-status", () => {
       try {
         return this.firstRunManager.getStatus();
       } catch (e) {
@@ -811,7 +913,7 @@ class ApplicationController {
       }
     });
 
-    ipcMain.handle("complete-first-run", async () => {
+    guardedHandle("complete-first-run", async () => {
       try {
         this.firstRunManager.markCompleted();
         this.isFirstRun = false;
@@ -835,6 +937,9 @@ class ApplicationController {
         // interrupt setup, begin ambient listening if the engine is ready
         // (STT-03/SC3). Defers silently if the model still isn't downloaded.
         this._ensureAmbientListening("onboarding-complete");
+        // Onboarding done: start the continuous capture loop too (CONT-04) —
+        // it was skipped during the wizard for the same reason as the mic.
+        this._ensureContinuousCapture("onboarding-complete");
         return { success: true };
       } catch (e) {
         return { success: false, error: e.message };
@@ -843,7 +948,7 @@ class ApplicationController {
 
     // Open a URL in the system browser (used by the GitHub star button
     // in onboarding).
-    ipcMain.handle("open-external", async (_event, url) => {
+    guardedHandle("open-external", async (_event, url) => {
       try {
         if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
           return { ok: false, error: "Invalid URL" };
@@ -858,7 +963,7 @@ class ApplicationController {
     });
 
     // Close the onboarding wizard window.
-    ipcMain.handle("close-onboarding", () => {
+    guardedHandle("close-onboarding", () => {
       try {
         windowManager.closeOnboarding();
         return { success: true };
@@ -867,11 +972,46 @@ class ApplicationController {
       }
     });
 
+    // SEC-02 guided recovery: deep-link to the EXACT System Settings privacy
+    // pane. ENUM ONLY — the renderer never passes a URL, and the http(s)-only
+    // `open-external` handler above is deliberately NOT loosened for
+    // x-apple.systempreferences URLs (the enum→URL mapping lives here in MAIN).
+    guardedHandle("open-privacy-settings", async (_event, kind) => {
+      const urls = {
+        screen: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        microphone: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+      };
+      const url = urls[kind];
+      if (!url) return { ok: false, error: "Invalid kind" };
+      const { shell } = require("electron");
+      try {
+        await shell.openExternal(url);
+        return { ok: true };
+      } catch (e) {
+        // Pane anchors can drift across macOS versions — fall back to the
+        // Privacy & Security root before giving up.
+        try {
+          await shell.openExternal("x-apple.systempreferences:com.apple.preference.security");
+          return { ok: true, fallback: true };
+        } catch (e2) {
+          logger.warn("Failed to open privacy settings", { kind, error: e2.message });
+          return { ok: false, error: e2.message };
+        }
+      }
+    });
+
+    // SEC-02: Screen Recording grants only take effect in a NEW process —
+    // the recovery banner offers this one-click relaunch.
+    guardedHandle("relaunch-app", () => {
+      app.relaunch();
+      app.exit(0);
+    });
+
     // Download the ggml voice model via the 04-02 downloader (resumable HTTP
     // Range + SHA256 verify; atomic-rename-after-verify; no Python install
     // step). Streams STRUCTURED { percent, downloadedBytes, totalBytes } on the same
     // `install-progress` channel the onboarding/settings UI already listens on.
-    ipcMain.handle("download-whisper-model", async (event, modelName) => {
+    guardedHandle("download-whisper-model", async (event, modelName) => {
       try {
         const sender = event.sender;
         const downloader = this.getWhisperModelDownloader();
@@ -901,7 +1041,7 @@ class ApplicationController {
 
     // Resident STT engine health (mirrors get-model-status). Three-level health:
     // binary present / model present / server up (+ optional async responding).
-    ipcMain.handle("get-whisper-status", async (_event, opts) => {
+    guardedHandle("get-whisper-status", async (_event, opts) => {
       try {
         return await this.getWhisperServerManager().getStatus(opts);
       } catch (e) {
@@ -912,7 +1052,7 @@ class ApplicationController {
     // Voice-engine recovery (mirrors recover-model). 'download' → (re)fetch the
     // ggml model with progress then restart; anything else → (re)start the owned
     // server. Either way the speech service is refreshed so the mic recovers.
-    ipcMain.handle("whisper-recover", async (event, action) => {
+    guardedHandle("whisper-recover", async (event, action) => {
       try {
         const mgr = this.getWhisperServerManager();
         if (action === "download") {
@@ -949,7 +1089,7 @@ class ApplicationController {
     // Provider-neutral / local-named handlers (they outlived the cloud path
     // removed at PROV-07). Mirrors the whisper download-progress pattern but
     // emits STRUCTURED { status, percent } events.
-    ipcMain.handle("download-model", async (event, modelTag) => {
+    guardedHandle("download-model", async (event, modelTag) => {
       try {
         const sender = event.sender;
         return await this.getLocalModelManager().pullModel(
@@ -966,7 +1106,7 @@ class ApplicationController {
       }
     });
 
-    ipcMain.handle("get-model-status", async (_event, opts) => {
+    guardedHandle("get-model-status", async (_event, opts) => {
       try {
         // opts.probeResponds:false → fast detection path (no model generate); the
         // onboarding serverUp gate uses it so it never blocks on "Probing".
@@ -976,7 +1116,7 @@ class ApplicationController {
       }
     });
 
-    ipcMain.handle("list-installed-models", async () => {
+    guardedHandle("list-installed-models", async () => {
       try {
         return await this.getLocalModelManager().listInstalledModels();
       } catch (_) {
@@ -984,7 +1124,7 @@ class ApplicationController {
       }
     });
 
-    ipcMain.handle("model-preflight", async () => {
+    guardedHandle("model-preflight", async () => {
       try {
         return await this.getLocalModelManager().preflight();
       } catch (e) {
@@ -996,7 +1136,7 @@ class ApplicationController {
     // own the daemon (an adopted daemon isn't ours to restart — surface status
     // so the UI guides the user); 'repull' → re-pull the model with progress;
     // anything else → just report status.
-    ipcMain.handle("recover-model", async (event, action) => {
+    guardedHandle("recover-model", async (event, action) => {
       try {
         const manager = this.getLocalModelManager();
         if (action === "restart") {
@@ -1020,7 +1160,7 @@ class ApplicationController {
 
     // Provider-neutral connection test (survives PROV-07; llmService is the
     // registry-selected provider — Local, the sole engine after removal).
-    ipcMain.handle("test-provider-connection", async () => {
+    guardedHandle("test-provider-connection", async () => {
       try {
         return await llmService.testConnection();
       } catch (e) {
@@ -1028,28 +1168,28 @@ class ApplicationController {
       }
     });
 
-    ipcMain.handle("save-settings", (event, settings) => {
+    guardedHandle("save-settings", (event, settings) => {
       return this.saveSettings(settings);
     });
 
-    ipcMain.handle("update-app-icon", (event, iconKey) => {
+    guardedHandle("update-app-icon", (event, iconKey) => {
       return this.updateAppIcon(iconKey);
     });
 
-    ipcMain.handle("update-active-skill", (event, skill) => {
+    guardedHandle("update-active-skill", (event, skill) => {
       this.activeSkill = skill;
       windowManager.broadcastToAllWindows("skill-changed", { skill });
       return { success: true };
     });
 
-    ipcMain.handle("restart-app-for-stealth", () => {
+    guardedHandle("restart-app-for-stealth", () => {
       // Force restart the app to ensure stealth name changes take effect
       const { app } = require("electron");
       app.relaunch();
       app.exit();
     });
 
-    ipcMain.handle("close-window", (event) => {
+    guardedHandle("close-window", (event) => {
       const webContents = event.sender;
       windowManager.windows.forEach((win, _type) => {
         if (win.webContents === webContents) {
@@ -1061,18 +1201,18 @@ class ApplicationController {
     });
 
     // LLM window specific handlers
-    ipcMain.handle("expand-llm-window", (event, contentMetrics) => {
+    guardedHandle("expand-llm-window", (event, contentMetrics) => {
       windowManager.expandLLMWindow(contentMetrics);
       return { success: true, contentMetrics };
     });
 
-    ipcMain.handle("resize-llm-window-for-content", (event, contentMetrics) => {
+    guardedHandle("resize-llm-window-for-content", (event, contentMetrics) => {
       // Use the same expansion logic for now, can be enhanced later
       windowManager.expandLLMWindow(contentMetrics);
       return { success: true, contentMetrics };
     });
 
-    ipcMain.handle("quit-app", () => {
+    guardedHandle("quit-app", () => {
       logger.info("Quit app requested via IPC");
       try {
         // Force quit the application
@@ -1098,7 +1238,7 @@ class ApplicationController {
     });
 
     // Handle close settings
-    ipcMain.on("close-settings", () => {
+    guardedOn("close-settings", () => {
       const settingsWindow = windowManager.getWindow("settings");
       if (settingsWindow) {
         settingsWindow.hide();
@@ -1106,18 +1246,18 @@ class ApplicationController {
     });
 
     // Handle save settings (synchronous)
-    ipcMain.on("save-settings", (event, settings) => {
+    guardedOn("save-settings", (event, settings) => {
       this.saveSettings(settings);
     });
 
     // Handle update skill
-    ipcMain.on("update-skill", (event, skill) => {
+    guardedOn("update-skill", (event, skill) => {
       this.activeSkill = skill;
       windowManager.broadcastToAllWindows("skill-updated", { skill });
     });
 
     // Handle quit app (alternative method)
-    ipcMain.on("quit-app", () => {
+    guardedOn("quit-app", () => {
       logger.info("Quit app requested via IPC (on method)");
       try {
         const { app } = require("electron");
@@ -1169,6 +1309,124 @@ class ApplicationController {
   }
 
   /**
+   * Start the continuous screen-capture loop (CONT-04) — guarded + idempotent,
+   * mirroring _ensureAmbientListening. Skipped while onboarding is up (the
+   * complete-first-run handler re-invokes it); startContinuousCapture() itself
+   * is idempotent, so repeated calls are safe. NEVER blocks or throws — a
+   * capture failure must never block startup.
+   */
+  _ensureContinuousCapture(reason = "auto") {
+    try {
+      if (this.isFirstRun) {
+        logger.debug("Continuous capture deferred: onboarding in progress", { reason });
+        return; // onboarding wizard is up — complete-first-run re-invokes us
+      }
+      captureService.startContinuousCapture();
+    } catch (e) {
+      logger.warn("Continuous capture start failed (continuing without it)", {
+        error: e.message,
+      });
+    }
+  }
+
+  /**
+   * Register the continuous-capture pause/resume lifecycle (CONT-04): pause on
+   * screen lock + system sleep, resume on unlock + wake — the ONLY pause
+   * conditions this phase (battery/thermal back-off is Phase 6). Guarded so a
+   * double-register can't happen; each callback body is try/caught so a
+   * capture-service failure never crashes a powerMonitor event
+   * (degrade-never-crash).
+   */
+  _registerCaptureLifecycle() {
+    if (this._captureLifecycleArmed) {
+      return;
+    }
+    try {
+      if (!powerMonitor || typeof powerMonitor.on !== "function") {
+        return;
+      }
+      powerMonitor.on("lock-screen", () => {
+        try { captureService.pauseContinuousCapture(); } catch (e) {
+          logger.warn("Capture pause on lock-screen failed", { error: e.message });
+        }
+      });
+      powerMonitor.on("suspend", () => {
+        try { captureService.pauseContinuousCapture(); } catch (e) {
+          logger.warn("Capture pause on suspend failed", { error: e.message });
+        }
+      });
+      powerMonitor.on("unlock-screen", () => {
+        try { captureService.resumeContinuousCapture(); } catch (e) {
+          logger.warn("Capture resume on unlock-screen failed", { error: e.message });
+        }
+      });
+      powerMonitor.on("resume", () => {
+        try { captureService.resumeContinuousCapture(); } catch (e) {
+          logger.warn("Capture resume on wake failed", { error: e.message });
+        }
+      });
+      this._captureLifecycleArmed = true;
+      logger.debug("Continuous capture lock/sleep lifecycle registered");
+    } catch (e) {
+      logger.warn("Failed to register capture lifecycle handlers", { error: e.message });
+    }
+  }
+
+  /**
+   * Build + wire the TCC permission-loss monitor (SEC-02). The pure state
+   * machine (src/core/tcc-monitor.js) fuses the capture loop's black-frame
+   * signal with systemPreferences.getMediaAccessStatus per the LOCKED
+   * cross-check (banner only when BOTH agree) and emits transition-only
+   * state changes, which broadcast as `permission-status` to the overlay
+   * banner. The factory itself is inert off-darwin. Signals wired here:
+   * capture frame stats (05-01 seam) + browser-window-focus; startup and
+   * powerMonitor-resume checks are invoked from their own sites. Guarded
+   * against double-registration; degrade-never-crash.
+   */
+  _registerTccMonitor() {
+    if (this._tccMonitorArmed) {
+      return;
+    }
+    try {
+      const { createTccMonitor } = require("./src/core/tcc-monitor");
+      this.tccMonitor = createTccMonitor({
+        getScreenStatus: () => {
+          try { return systemPreferences.getMediaAccessStatus("screen"); } catch (_) { return "unknown"; }
+        },
+        getMicStatus: () => {
+          try { return systemPreferences.getMediaAccessStatus("microphone"); } catch (_) { return "unknown"; }
+        },
+        onStateChange: (state) => {
+          logger.warn("Permission state changed", state);
+          windowManager.broadcastToAllWindows("permission-status", state);
+        },
+        onDisagreement: (d) => logger.warn("Permission signal disagreement", d),
+      });
+      // Capture-loop signal (the 05-01 seam): every captured tick feeds the
+      // black-frame side of the cross-check.
+      captureService.setFrameStatsListener((stats) => {
+        try {
+          this.tccMonitor.recordFrameStats(stats);
+        } catch (e) {
+          logger.warn("TCC frame-stats ingest failed", { error: e.message });
+        }
+      });
+      // Focus regain — one of the LOCKED event-driven re-check triggers.
+      app.on("browser-window-focus", () => {
+        try {
+          this.tccMonitor?.checkNow("focus");
+        } catch (e) {
+          logger.warn("TCC focus re-check failed", { error: e.message });
+        }
+      });
+      this._tccMonitorArmed = true;
+      logger.debug("TCC permission monitor registered");
+    } catch (e) {
+      logger.warn("Failed to register TCC permission monitor", { error: e.message });
+    }
+  }
+
+  /**
    * Register the sleep/wake re-warm (openwhispr #766: sleep evicts the local
    * GPU/stream state — the whisper-server can die and the mic/tap streams go
    * stale on resume). powerMonitor is only available after app-ready, so this
@@ -1187,6 +1445,14 @@ class ApplicationController {
         this.onWakeFromSleep().catch((e) =>
           logger.warn("onWakeFromSleep threw (ignored)", { error: e && e.message }),
         );
+        // TCC re-check on wake (SEC-02): sleep/update cycles are exactly when
+        // grants get silently revoked. Alongside the re-warm, NOT inside it
+        // (wake-rewarm.js internals stay untouched).
+        try {
+          this.tccMonitor?.checkNow("resume");
+        } catch (e) {
+          logger.warn("TCC resume re-check failed", { error: e && e.message });
+        }
       });
       this._powerMonitorWired = true;
       logger.debug("powerMonitor resume handler registered");
@@ -1406,9 +1672,6 @@ class ApplicationController {
       // Use image directly with LLM and active skill; do not send chat messages here
       const sessionHistory = sessionManager.getOptimizedHistory();
 
-      const skillsRequiringProgrammingLanguage = ['programming'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-
       this._responseSeq = (this._responseSeq || 0) + 1;
       const messageId = `img-${Date.now()}-${this._responseSeq}`;
       windowManager.broadcastToAllWindows("transcription-llm-response-start", {
@@ -1421,7 +1684,6 @@ class ApplicationController {
         capture.mimeType || 'image/png',
         this.activeSkill,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
           windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
             messageId,
@@ -1471,10 +1733,6 @@ class ApplicationController {
       // Add user input to session memory
       sessionManager.addUserInput(text, 'llm_input');
 
-      // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['programming'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-
       this._responseSeq = (this._responseSeq || 0) + 1;
       const messageId = `chat-${Date.now()}-${this._responseSeq}`;
       windowManager.broadcastToAllWindows("transcription-llm-response-start", {
@@ -1487,7 +1745,6 @@ class ApplicationController {
         text,
         this.activeSkill,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
           windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
             messageId,
@@ -1500,7 +1757,6 @@ class ApplicationController {
       logger.info("LLM processing completed, showing response", {
         responseLength: llmResult.response.length,
         skill: this.activeSkill,
-        programmingLanguage: needsProgrammingLanguage ? this.codingLanguage : 'not applicable',
         processingTime: llmResult.metadata.processingTime,
         responsePreview: llmResult.response.substring(0, 200) + "...",
       });
@@ -1639,10 +1895,6 @@ class ApplicationController {
         textPreview: cleanText.substring(0, 100) + "..."
       });
 
-      // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['programming'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-
       // Stream the answer so it renders progressively in the chat + overlay.
       // A unique messageId ties the start/chunk/final events to one bubble so
       // the UI never duplicates or interleaves concurrent responses.
@@ -1660,7 +1912,6 @@ class ApplicationController {
         cleanText,
         this.activeSkill,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
           windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
             messageId,
@@ -1694,7 +1945,6 @@ class ApplicationController {
       logger.info("Transcription LLM response completed", {
         responseLength: llmResult.response.length,
         skill: this.activeSkill,
-        programmingLanguage: needsProgrammingLanguage ? this.codingLanguage : 'not applicable',
         processingTime: llmResult.metadata.processingTime
       });
 
@@ -1863,6 +2113,12 @@ class ApplicationController {
       if (stoppingTap && typeof stoppingTap.catch === "function") stoppingTap.catch(() => {});
     } catch (_) { /* best effort */ }
 
+    // Stop the continuous capture loop (CONT-04). Synchronous clearInterval —
+    // fire-and-forget, best effort.
+    try {
+      captureService.stopContinuousCapture();
+    } catch (_) { /* best effort */ }
+
     const sessionStats = sessionManager.getMemoryUsage();
     logger.info("Application shutting down", {
       sessionEvents: sessionStats.eventCount,
@@ -1921,7 +2177,6 @@ class ApplicationController {
     // using. Empty strings are returned rather than skipped so the UI can
     // distinguish "unset" from "stale value from a previous load".
     return {
-      codingLanguage: this.codingLanguage || "cpp",
       activeSkill: this.activeSkill || "general",
       appIcon: this.appIcon || "terminal",
       selectedIcon: this.appIcon || "terminal",
@@ -1940,6 +2195,13 @@ class ApplicationController {
       model: config.get("llm.local.model"),
       curatedModels: config.get("llm.local.curatedModels"),
 
+      // Notes/md-context (CONT-05). Folder + budget come from config (.env
+      // NOTES_FOLDER, restart-to-apply); notesStatus carries the live
+      // "N of M files loaded" numbers from the launch-time load.
+      notesFolder: config.get("notes.folder") || "",
+      notesBudgetChars: config.get("notes.budgetChars"),
+      notesStatus: contextManager.getStatus(),
+
       speechAvailable: this.speechAvailable
     };
   }
@@ -1947,12 +2209,6 @@ class ApplicationController {
   saveSettings(settings) {
     try {
       // ── In-memory updates + window broadcasts ──
-      if (settings.codingLanguage) {
-        this.codingLanguage = settings.codingLanguage;
-        windowManager.broadcastToAllWindows("coding-language-changed", {
-          language: settings.codingLanguage,
-        });
-      }
       if (settings.activeSkill) {
         this.activeSkill = settings.activeSkill;
         windowManager.broadcastToAllWindows("skill-updated", {
@@ -1997,6 +2253,13 @@ class ApplicationController {
       }
       if (settings.model !== undefined) {
         envUpdates.LOCAL_MODEL = settings.model;
+      }
+
+      // Notes folder (CONT-05). Restart-to-apply, matching LOCAL_MODEL: the
+      // loader reads config (-> .env) once at launch, so the new folder takes
+      // effect on the next boot.
+      if (settings.notesFolder !== undefined) {
+        envUpdates.NOTES_FOLDER = settings.notesFolder;
       }
 
       const persistedKeys = this.persistEnvUpdates(envUpdates);

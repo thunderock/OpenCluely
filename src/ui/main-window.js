@@ -339,44 +339,6 @@ class MainWindowUI {
             }
         });
 
-        // Language dropdown
-        this.languageSelect = document.getElementById('codingLanguage');
-        if (this.languageSelect) {
-            // Set default to Python if no value is set
-            this.languageSelect.value = 'python';
-
-            // Initialize with current setting
-            if (window.electronAPI && window.electronAPI.getSettings) {
-                window.electronAPI.getSettings().then(settings => {
-                    if (settings && settings.codingLanguage) {
-                        this.languageSelect.value = settings.codingLanguage;
-                    } else {
-                        // Save Python as default if no language is set
-                        this.languageSelect.value = 'python';
-                        window.electronAPI.saveSettings({ codingLanguage: 'python' });
-                    }
-                }).catch(() => {
-                    // Fallback to Python on error
-                    this.languageSelect.value = 'python';
-                });
-            }
-
-            this.languageSelect.addEventListener('change', (e) => {
-                const lang = e.target.value;
-                if (window.electronAPI && window.electronAPI.saveSettings) {
-                    window.electronAPI.saveSettings({ codingLanguage: lang });
-                }
-                // Resize for any width change
-                setTimeout(() => {
-                    const commandTab = document.querySelector('.command-tab');
-                    if (commandTab && window.electronAPI && window.electronAPI.resizeWindow) {
-                        const rect = commandTab.getBoundingClientRect();
-                        window.electronAPI.resizeWindow(Math.ceil(rect.width), Math.ceil(rect.height));
-                    }
-                }, 50);
-            });
-        }
-
         // Info button / shortcuts popover
         if (this.infoButton && this.shortcutsPopover) {
             this.infoButton.addEventListener('click', (e) => {
@@ -460,20 +422,6 @@ class MainWindowUI {
                 this.applyMicVisibility();
             });
 
-            // Listen for coding language changes from other windows
-            window.electronAPI.onCodingLanguageChanged((event, data) => {
-                if (data && data.language && this.languageSelect) {
-                    // avoid clobbering if same value
-                    if (this.languageSelect.value !== data.language) {
-                        this.languageSelect.value = data.language;
-                    }
-                    logger.debug('Language updated from other window', {
-                        component: 'MainWindowUI',
-                        language: data.language
-                    });
-                }
-            });
-
             // Listen for main window shown event to refresh speech availability
             window.electronAPI.onMainWindowShown(() => {
                 logger.debug('Main window shown - refreshing speech availability', {
@@ -494,6 +442,16 @@ class MainWindowUI {
             }
             if (window.electronAPI.onLlmError) {
                 window.electronAPI.onLlmError((event, data) => this.handleLLMError(data || {}));
+            }
+
+            // TCC permission recovery (SEC-02): the main-process monitor
+            // broadcasts transition-only { screen:'ok'|'lost', mic:'ok'|'lost',
+            // reason } states — each 'lost' kind raises its inline banner
+            // (guided re-grant + relaunch), each 'ok' dismisses it.
+            if (window.electronAPI.onPermissionStatus) {
+                window.electronAPI.onPermissionStatus((_event, state) => {
+                    this.handlePermissionStatus(state || {});
+                });
             }
 
             // Global keyboard shortcuts
@@ -655,6 +613,8 @@ class MainWindowUI {
 
     // Inject the panel's spinner keyframes once. index.html doesn't ship Font
     // Awesome or a .spinner class, so the recovery UI stays self-contained.
+    // SEC-01 note: the panel shell is sanitized and the locked policy strips
+    // style="" attrs, so ALL shell styling lives here as classes instead.
     _ensureRecoveryStyles() {
         if (document.getElementById('lu-styles')) return;
         const style = document.createElement('style');
@@ -671,6 +631,18 @@ class MainWindowUI {
                 vertical-align: -1px;
                 margin-right: 6px;
             }
+            .lu-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+            .lu-warn-icon { color: #f87171; font-size: 14px; line-height: 1; }
+            .lu-title { font-size: 13px; }
+            .lu-dismiss { margin-left: auto; background: transparent; border: 0; color: rgba(255,255,255,0.6); cursor: pointer; font-size: 16px; line-height: 1; }
+            .lu-message { color: rgba(255,255,255,0.85); line-height: 1.5; margin-bottom: 12px; }
+            .lu-progress { display: none; margin-bottom: 12px; }
+            .lu-progress-track { height: 8px; background: rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden; }
+            .lu-progress-fill { height: 100%; width: 0%; background: #4ade80; border-radius: 6px; transition: width 0.3s ease; }
+            .lu-progress-status { margin-top: 6px; font-size: 11px; color: rgba(255,255,255,0.6); }
+            .lu-actions { display: flex; gap: 8px; justify-content: flex-end; }
+            .lu-primary { background: #f87171; border: 0; border-radius: 8px; color: #0a0a0a; font-weight: 600; font-size: 12px; padding: 8px 14px; cursor: pointer; }
+            .lu-close { background: transparent; border: 1px solid rgba(255,255,255,0.18); border-radius: 8px; color: rgba(255,255,255,0.85); font-size: 12px; padding: 8px 14px; cursor: pointer; }
         `;
         document.head.appendChild(style);
     }
@@ -700,24 +672,40 @@ class MainWindowUI {
             font-size: 12.5px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         `;
-        panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                <span style="color:#f87171; font-size:14px; line-height:1;">&#9888;</span>
-                <strong style="font-size:13px;">Local model unavailable</strong>
-                <button class="lu-dismiss" title="Dismiss" style="margin-left:auto; background:transparent; border:0; color:rgba(255,255,255,0.6); cursor:pointer; font-size:16px; line-height:1;">&times;</button>
+        // SEC-01: the shell goes through the one locked sanitize policy. It
+        // forbids <button> and style="" — so the shell is button-free (styling
+        // lives in _ensureRecoveryStyles classes) and ALL buttons are
+        // createElement'd AFTER assignment: status-derived strings can never
+        // become interactive elements.
+        panel.innerHTML = window.sanitizeHtml(`
+            <div class="lu-header">
+                <span class="lu-warn-icon">&#9888;</span>
+                <strong class="lu-title">Local model unavailable</strong>
             </div>
-            <div class="lu-message" style="color:rgba(255,255,255,0.85); line-height:1.5; margin-bottom:12px;"></div>
-            <div class="lu-progress" style="display:none; margin-bottom:12px;">
-                <div style="height:8px; background:rgba(255,255,255,0.08); border-radius:6px; overflow:hidden;">
-                    <div class="lu-progress-fill" style="height:100%; width:0%; background:#4ade80; border-radius:6px; transition:width 0.3s ease;"></div>
+            <div class="lu-message"></div>
+            <div class="lu-progress">
+                <div class="lu-progress-track">
+                    <div class="lu-progress-fill"></div>
                 </div>
-                <div class="lu-progress-status" style="margin-top:6px; font-size:11px; color:rgba(255,255,255,0.6);"></div>
+                <div class="lu-progress-status"></div>
             </div>
-            <div style="display:flex; gap:8px; justify-content:flex-end;">
-                <button class="lu-primary" style="background:#f87171; border:0; border-radius:8px; color:#0a0a0a; font-weight:600; font-size:12px; padding:8px 14px; cursor:pointer;"></button>
-                <button class="lu-close" style="background:transparent; border:1px solid rgba(255,255,255,0.18); border-radius:8px; color:rgba(255,255,255,0.85); font-size:12px; padding:8px 14px; cursor:pointer;">Dismiss</button>
-            </div>
-        `;
+            <div class="lu-actions"></div>
+        `);
+
+        const dismissX = document.createElement('button');
+        dismissX.className = 'lu-dismiss';
+        dismissX.title = 'Dismiss';
+        dismissX.innerHTML = '&times;';
+        panel.querySelector('.lu-header').appendChild(dismissX);
+
+        const primaryBtn = document.createElement('button');
+        primaryBtn.className = 'lu-primary';
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'lu-close';
+        closeBtn.textContent = 'Dismiss';
+        const actionsRow = panel.querySelector('.lu-actions');
+        actionsRow.appendChild(primaryBtn);
+        actionsRow.appendChild(closeBtn);
 
         panel.querySelector('.lu-message').textContent = message;
         panel.querySelector('.lu-primary').textContent = action.label;
@@ -836,6 +824,156 @@ class MainWindowUI {
         this._localUnavailablePanel = null;
         // Shrink the window back to the compact command bar.
         this.resizeWindowToContent();
+    }
+
+    // ── TCC permission-loss banners (SEC-02) ─────────────────────────────
+    // Inline, dismissible, NEVER modal — the showLocalUnavailable idiom. One
+    // banner element per kind (perm-banner-screen / perm-banner-mic); re-show
+    // replaces, dismiss removes, the app stays fully usable behind it.
+
+    handlePermissionStatus(state) {
+        if (state.screen === 'lost') this.showPermissionBanner('screen');
+        else this.hidePermissionBanner('screen');
+        if (state.mic === 'lost') this.showPermissionBanner('mic');
+        else this.hidePermissionBanner('mic');
+    }
+
+    // Fixed stack under the command bar so screen + mic banners never overlap.
+    _ensurePermBannerStack() {
+        let stack = document.getElementById('perm-banner-stack');
+        if (!stack) {
+            stack = document.createElement('div');
+            stack.id = 'perm-banner-stack';
+            stack.style.cssText = `
+                position: fixed;
+                top: 42px;
+                left: 50%;
+                transform: translateX(-50%);
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                width: 400px;
+                max-width: calc(100vw - 24px);
+                z-index: 1002;
+                -webkit-app-region: no-drag;
+            `;
+            document.body.appendChild(stack);
+        }
+        return stack;
+    }
+
+    showPermissionBanner(kind) {
+        const variants = {
+            screen: {
+                id: 'perm-banner-screen',
+                title: 'Screen access lost',
+                body: "OpenCluely can't see your screen — macOS revoked Screen Recording (this happens after updates). Re-grant it, then relaunch.",
+                openSettings: () => window.electronAPI.openPrivacySettings('screen'),
+                relaunch: true
+            },
+            mic: {
+                id: 'perm-banner-mic',
+                title: 'Microphone access lost',
+                body: 'Voice input is off — macOS revoked Microphone access. Re-grant it to restore listening.',
+                openSettings: () => window.electronAPI.openPrivacySettings('microphone'),
+                relaunch: false
+            }
+        };
+        const variant = variants[kind];
+        if (!variant) return;
+
+        this.hidePermissionBanner(kind); // re-show replaces
+        this._ensureRecoveryStyles(); // reuse the lu-* classes (SEC-01: no style="" attrs)
+
+        const banner = document.createElement('div');
+        banner.id = variant.id;
+        banner.style.cssText = `
+            background: linear-gradient(135deg, rgba(20, 20, 20, 0.92) 0%, rgba(10, 10, 10, 0.88) 100%);
+            backdrop-filter: blur(18px);
+            border: 1px solid rgba(248, 113, 113, 0.35);
+            border-radius: 10px;
+            color: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+            padding: 14px 16px;
+            font-size: 12.5px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        `;
+        // SEC-01: the static shell goes through the one locked sanitize policy
+        // (which strips <button> + style=""), so the shell is button-free and
+        // every action button is createElement'd AFTER assignment.
+        banner.innerHTML = window.sanitizeHtml(`
+            <div class="lu-header">
+                <span class="lu-warn-icon">&#9888;</span>
+                <strong class="lu-title"></strong>
+            </div>
+            <div class="lu-message"></div>
+            <div class="lu-actions"></div>
+        `);
+        banner.querySelector('.lu-title').textContent = variant.title;
+        banner.querySelector('.lu-message').textContent = variant.body;
+
+        const dismissX = document.createElement('button');
+        dismissX.className = 'lu-dismiss';
+        dismissX.title = 'Dismiss';
+        dismissX.innerHTML = '&times;';
+        dismissX.addEventListener('click', () => this.hidePermissionBanner(kind));
+        banner.querySelector('.lu-header').appendChild(dismissX);
+
+        const actionsRow = banner.querySelector('.lu-actions');
+
+        const settingsBtn = document.createElement('button');
+        settingsBtn.className = 'lu-primary';
+        settingsBtn.textContent = 'Open System Settings';
+        settingsBtn.addEventListener('click', () => {
+            if (window.electronAPI && window.electronAPI.openPrivacySettings) {
+                Promise.resolve(variant.openSettings()).catch(() => { /* main logs failures */ });
+            }
+        });
+        actionsRow.appendChild(settingsBtn);
+
+        if (variant.relaunch) {
+            // Screen Recording grants only take effect in a NEW process.
+            const relaunchBtn = document.createElement('button');
+            relaunchBtn.className = 'lu-close';
+            relaunchBtn.textContent = 'Relaunch app';
+            relaunchBtn.addEventListener('click', () => {
+                if (window.electronAPI && window.electronAPI.relaunchApp) {
+                    Promise.resolve(window.electronAPI.relaunchApp()).catch(() => { /* ignore */ });
+                }
+            });
+            actionsRow.appendChild(relaunchBtn);
+        }
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'lu-close';
+        closeBtn.textContent = 'Dismiss';
+        closeBtn.addEventListener('click', () => this.hidePermissionBanner(kind));
+        actionsRow.appendChild(closeBtn);
+
+        this._ensurePermBannerStack().appendChild(banner);
+        this._resizeForPanel(banner);
+
+        logger.info('Permission-loss banner shown', {
+            component: 'MainWindowUI',
+            kind
+        });
+    }
+
+    hidePermissionBanner(kind) {
+        const id = kind === 'screen' ? 'perm-banner-screen' : 'perm-banner-mic';
+        const banner = document.getElementById(id);
+        if (!banner) return; // cheap no-op on every 'ok' broadcast
+        if (banner.parentNode) banner.parentNode.removeChild(banner);
+        const stack = document.getElementById('perm-banner-stack');
+        if (stack && stack.childElementCount === 0) {
+            if (stack.parentNode) stack.parentNode.removeChild(stack);
+            // Shrink back only when nothing else needs the space.
+            if (!this._localUnavailablePanel) this.resizeWindowToContent();
+        }
+        logger.info('Permission-loss banner dismissed', {
+            component: 'MainWindowUI',
+            kind
+        });
     }
 
     setupKeyboardShortcuts() {
@@ -1237,7 +1375,7 @@ class MainWindowUI {
         // Create temporary notification
         const notification = document.createElement('div');
         notification.className = 'skill-change-notification';
-        notification.innerHTML = `${arrow} ${displayName}`;
+        notification.innerHTML = window.sanitizeHtml(`${arrow} ${displayName}`); // SEC-01: skill name is a variable — sanitize
         notification.style.cssText = `
             position: fixed;
             top: 50%;
@@ -1445,7 +1583,7 @@ class MainWindowUI {
             gap: 8px;
             transition: all 0.2s ease;
         `;
-        item.innerHTML = `<i class="fas ${iconClass}"></i>${text}`;
+        item.innerHTML = window.sanitizeHtml(`<i class="fas ${iconClass}"></i>${text}`); // SEC-01: composite sink — sanitize
         item.addEventListener('mouseover', () => {
             item.style.background = 'rgba(255, 255, 255, 0.1)';
         });

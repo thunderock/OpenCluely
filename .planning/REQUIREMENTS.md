@@ -41,16 +41,16 @@ Requirements for this milestone. Each maps to a roadmap phase.
 - [ ] **CONT-01**: A pause-triggered orchestrator fuses recent transcript + current screen frame + md-context + history at each natural pause and routes it to the local provider
 - [ ] **CONT-02**: A relevance gate runs a cheap pre-filter (heuristic / `seemsLikeQuestion`) before invoking the model, and the model may abstain — a suggestion surfaces only when it's actually answerable
 - [ ] **CONT-03**: Suggestions stream token-by-token into the overlay (fixing the currently-dead `-chunk` path) and are ephemeral — they auto-clear/replace on topic change and never stack a backlog
-- [ ] **CONT-04**: Continuous screen capture runs on a throttled interval with downscale-before-encode and frame-diff dedup (unchanged frames are skipped); the image is sent directly to the model (no OCR)
-- [ ] **CONT-05**: On startup the app loads a settings-configured folder of `.md` files as bounded standing context, reloaded each launch, with a size budget
+- [x] **CONT-04**: Continuous screen capture runs on a throttled interval with downscale-before-encode and frame-diff dedup (unchanged frames are skipped); the image is sent directly to the model (no OCR)
+- [x] **CONT-05**: On startup the app loads a settings-configured folder of `.md` files as bounded standing context, reloaded each launch, with a size budget
 - [ ] **CONT-06**: A persistent, self-visible "listening / watching" indicator always shows the app's capture state
 - [ ] **CONT-07**: A one-click pause/kill switch instantly halts all listening + watching, reachable without opening settings
 
 ### Hardening (SEC)
 
-- [ ] **SEC-01**: All model output is sanitized (DOMPurify) before `innerHTML` rendering at every sink — shipped together with continuous capture / md-context
-- [ ] **SEC-02**: On macOS the app detects loss of screen/mic capture permission after an update (e.g. all-black frames / mic status) and guides the user to re-grant (TCC recovery)
-- [ ] **SEC-03**: Privileged IPC (settings read, `openExternal`, clipboard) is scoped so the response/overlay renderers can't exfiltrate settings or keys
+- [x] **SEC-01**: All model output is sanitized (DOMPurify) before `innerHTML` rendering at every sink — shipped together with continuous capture / md-context
+- [x] **SEC-02**: On macOS the app detects loss of screen/mic capture permission after an update (e.g. all-black frames / mic status) and guides the user to re-grant (TCC recovery)
+- [x] **SEC-03**: Privileged IPC (settings read, `openExternal`, clipboard) is scoped so the response/overlay renderers can't exfiltrate settings or keys
 
 ### General-Purpose (GEN)
 
@@ -139,13 +139,13 @@ Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for ph
 | CONT-01 | Phase 6 | Pending |
 | CONT-02 | Phase 6 | Pending |
 | CONT-03 | Phase 6 | Pending |
-| CONT-04 | Phase 5 | Pending |
-| CONT-05 | Phase 5 | Pending |
+| CONT-04 | Phase 5 | Complete |
+| CONT-05 | Phase 5 | Complete |
 | CONT-06 | Phase 6 | Pending |
 | CONT-07 | Phase 6 | Pending |
-| SEC-01 | Phase 5 | Pending |
-| SEC-02 | Phase 5 | Pending |
-| SEC-03 | Phase 5 | Pending |
+| SEC-01 | Phase 5 | Complete |
+| SEC-02 | Phase 5 | Complete |
+| SEC-03 | Phase 5 | Complete |
 | GEN-01 | Phase 3 | Complete |
 | REL-01 | Phase 8 | Pending |
 | REL-02 | Phase 8 | Pending |
