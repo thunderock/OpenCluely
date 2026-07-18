@@ -23,6 +23,11 @@ After any natural pause in what you're saying or hearing, a **relevant, streamed
 - ✓ Skill-prompt-from-markdown mechanism (`prompt-loader.js`) + programming-language injection — existing
 - ✓ Global shortcuts, window binding, settings UI, first-run onboarding, `.env` config — existing
 - ✓ Cross-platform builds — Windows + Linux installers via GitHub Actions; macOS from source — existing
+- ✓ Continuous screen capture with interval throttle + downscale-before-encode + frame-diff dedup (hold-latest; consumer arrives in Phase 6) — Validated in Phase 5: Continuous Capture, Notes & Hardening
+- ✓ md-file context injection: settings-configured folder of `.md` files loaded each launch as ONE 12k-char-bounded standing context via `RequestBuilder.mdContext` — Validated in Phase 5
+- ✓ Model output sanitized (DOMPurify, one locked policy) at every `innerHTML` sink; hostile markdown proven inert live — Validated in Phase 5
+- ✓ macOS TCC loss detection (black-frame streak × `getMediaAccessStatus`) + guided re-grant banners with exact-pane deep-link and relaunch — Validated in Phase 5
+- ✓ Sender-scoped privileged IPC (60-row channel→audience table, default-deny) + minimal overlay preload; live denial probe passed — Validated in Phase 5
 
 ### Active
 
@@ -35,12 +40,9 @@ After any natural pause in what you're saying or hearing, a **relevant, streamed
 - [ ] `ClaudeProvider` + `CodexProvider` via headless CLI (**backup / escalation**), reusing existing terminal auth, modeled on `thunderock/forge`
 - [ ] Persistent local **STT server** replacing the per-utterance Whisper subprocess (prerequisite for continuous listening)
 - [ ] **Continuous always-on mode**: listen + watch from launch to quit; after each natural speech pause, capture current screen + recent transcript + md-context → local model → surface a suggestion, gated by a relevance filter
-- [ ] Continuous screen capture with interval throttle + downscale-before-encode + frame-diff dedup
-- [ ] **md-file context injection**: load a settings-configured directory of `.md` files as bounded standing context on every startup
 - [ ] Remove Gemini + Azure entirely (SDKs, hardcoded hosts, cert-verify bypass, Azure browser-DOM polyfill)
 - [ ] Generalize the skill/prompt system for general-purpose answers (not just DSA/coding)
 - [ ] Persistent "listening / watching" indicator + a pause/kill switch for continuous mode
-- [ ] Sanitize model output before `innerHTML` rendering (XSS hardening — untrusted content volume grows with screen-watch + md-context)
 - [ ] macOS **DMG in release CI** — unsigned universal (forge pattern) + `xattr -cr` Gatekeeper note in README
 - [ ] Establish an automated test baseline + lint/format setup (repo has ~0 coverage today)
 - [ ] Add a personal-project `Makefile` (`setup`, `setup-dev`, `run_tests`, `lint`)
@@ -92,4 +94,4 @@ After any natural pause in what you're saying or hearing, a **relevant, streamed
 | Establish tests + lint + `Makefile` baseline | Repo has ~0 automated coverage; personal-project convention | — Pending |
 
 ---
-*Last updated: 2026-07-14 — repositioned from interview-copilot to general always-on copilot / auto-reply suggester (name unchanged)*
+*Last updated: 2026-07-17 — Phase 5 complete: continuous capture + notes context landed with same-phase hardening (DOMPurify sinks, TCC recovery, sender-scoped IPC); gate human-approved, verification passed*
